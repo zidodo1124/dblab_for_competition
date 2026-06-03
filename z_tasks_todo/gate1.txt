@@ -1,0 +1,22 @@
+存储管理实现说明
+
+1. 磁盘管理器
+
+DiskManager 使用 page_no * PAGE_SIZE 计算页面在文件中的偏移，通过 lseek 定位后调用 read/write 读写指定字节数；若定位失败或实际读写字节数不符合接口要求，则抛出异常。文件创建使用 O_CREAT | O_EXCL | O_RDWR 防止重复创建，打开文件时维护 path2fd_ 和 fd2path_ 两张映射，关闭和删除文件前分别校验文件是否已打开或已关闭。
+
+2. LRU 替换器
+
+LRUReplacer 使用 list 保存可淘汰 frame，表头表示最近加入，表尾表示最久未使用；unordered_map 保存 frame_id 到 list 迭代器的映射。victim 从表尾淘汰，pin 将 frame 从可淘汰集合中移除，unpin 在 frame 不存在且容量允许时插入表头。三个接口都加锁保证并发安全。
+
+3. 缓冲池管理器
+
+BufferPoolManager 优先从 free_list_ 取空闲帧，空闲帧不足时调用 replacer_->victim 获取可淘汰帧。替换页面时，若旧页是脏页先写回磁盘，再删除旧页表映射、清空页面数据并建立新映射。fetch_page 命中缓冲池时增加 pin_count 并 pin 对应 frame；未命中时装入磁盘页。new_page 根据调用方传入的 fd 分配新页号并初始化页面。unpin_page 在 pin_count 归零时把 frame 交给 LRU。flush_page 和 flush_all_pages 将页面强制写回磁盘。delete_page 只删除未被 pin 的页面，并把 frame 放回 free_list_。
+
+4. 记录管理器
+
+RmFileHandle 通过缓冲池获取记录页，并用 RmPageHandle 解析页头、bitmap 和 slots。get_record 校验 rid 后复制记录数据返回；insert_record 自动选择 first_free_page_no 指向的空闲页，没有空闲页则新建页，设置 bitmap、复制记录并更新页内记录数，页面插满后从空闲页链表摘除；指定位置插入主要用于恢复，按 rid 写入并维护满页状态；delete_record 清除 bitmap，若页面从满变为未满则重新挂入空闲页链表；update_record 校验记录存在后覆盖 slot 数据。创建新记录页时初始化页头、bitmap，并更新 file_hdr_ 的 num_pages 和 first_free_page_no。
+
+5. 记录扫描器
+
+RmScan 从第一个记录页开始，用 Bitmap::next_bit 查找下一个有效记录位置。扫描过程中每次 fetch 页后立即 unpin，找不到更多记录时把 rid_.page_no 置为 file_hdr_.num_pages，is_end 通过该条件判断扫描结束。
+

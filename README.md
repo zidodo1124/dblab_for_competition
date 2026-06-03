@@ -41,3 +41,10 @@ RMDB由中国人民大学数据库教学团队开发，同时得到教育部-华
 
 ## License
 RMDB采用[木兰宽松许可证，第2版](https://license.coscl.org.cn/MulanPSL2)，可以自由拷贝和使用源码, 当做修改或分发时, 请遵守[木兰宽松许可证，第2版](https://license.coscl.org.cn/MulanPSL2).
+
+
+## 项目描述
+
+- 队伍ID：T2026104879910288
+- 队伍名称：胜天半子
+- 学校名称：华中科技大学

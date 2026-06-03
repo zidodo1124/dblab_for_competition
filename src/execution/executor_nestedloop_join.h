@@ -25,6 +25,33 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
     std::vector<Condition> fed_conds_;          // join条件
     bool isend;
 
+    std::unique_ptr<RmRecord> join_current_tuple() {
+        auto left_rec = left_->Next();
+        auto right_rec = right_->Next();
+        auto rec = std::make_unique<RmRecord>(len_);
+        memcpy(rec->data, left_rec->data, left_->tupleLen());
+        memcpy(rec->data + left_->tupleLen(), right_rec->data, right_->tupleLen());
+        return rec;
+    }
+
+    void advance_to_match() {
+        while (!left_->is_end()) {
+            while (!right_->is_end()) {
+                auto rec = join_current_tuple();
+                if (eval_conds(cols_, fed_conds_, rec.get())) {
+                    isend = false;
+                    return;
+                }
+                right_->nextTuple();
+            }
+            left_->nextTuple();
+            if (!left_->is_end()) {
+                right_->beginTuple();
+            }
+        }
+        isend = true;
+    }
+
    public:
     NestedLoopJoinExecutor(std::unique_ptr<AbstractExecutor> left, std::unique_ptr<AbstractExecutor> right, 
                             std::vector<Condition> conds) {
@@ -44,16 +71,34 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
     }
 
     void beginTuple() override {
-
+        left_->beginTuple();
+        right_->beginTuple();
+        if (left_->is_end() || right_->is_end()) {
+            isend = true;
+            return;
+        }
+        advance_to_match();
     }
 
     void nextTuple() override {
-        
+        if (isend) {
+            return;
+        }
+        right_->nextTuple();
+        advance_to_match();
     }
 
     std::unique_ptr<RmRecord> Next() override {
-        return nullptr;
+        return join_current_tuple();
     }
+
+    bool is_end() const override { return isend; }
+
+    size_t tupleLen() const override { return len_; }
+
+    const std::vector<ColMeta> &cols() const override { return cols_; }
+
+    ColMeta get_col_offset(const TabCol &target) override { return *get_col(cols_, target); }
 
     Rid &rid() override { return _abstract_rid; }
 };

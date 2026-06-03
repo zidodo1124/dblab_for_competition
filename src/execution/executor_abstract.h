@@ -15,6 +15,8 @@ See the Mulan PSL v2 for more details. */
 #include "index/ix.h"
 #include "system/sm.h"
 
+#include <cstring>
+
 class AbstractExecutor {
    public:
     Rid _abstract_rid;
@@ -52,5 +54,59 @@ class AbstractExecutor {
             throw ColumnNotFoundError(target.tab_name + '.' + target.col_name);
         }
         return pos;
+    }
+
+    bool eval_cond(const std::vector<ColMeta> &rec_cols, const Condition &cond, const RmRecord *rec) {
+        auto lhs_col = get_col(rec_cols, cond.lhs_col);
+        const char *lhs = rec->data + lhs_col->offset;
+        const char *rhs = nullptr;
+        std::unique_ptr<RmRecord> rhs_raw;
+        if (cond.is_rhs_val) {
+            rhs_raw = std::make_unique<RmRecord>(lhs_col->len);
+            if (cond.rhs_val.type == TYPE_INT) {
+                *(int *)rhs_raw->data = cond.rhs_val.int_val;
+            } else if (cond.rhs_val.type == TYPE_FLOAT) {
+                *(float *)rhs_raw->data = cond.rhs_val.float_val;
+            } else {
+                memset(rhs_raw->data, 0, lhs_col->len);
+                memcpy(rhs_raw->data, cond.rhs_val.str_val.c_str(), cond.rhs_val.str_val.size());
+            }
+            rhs = rhs_raw->data;
+        } else {
+            auto rhs_col = get_col(rec_cols, cond.rhs_col);
+            rhs = rec->data + rhs_col->offset;
+        }
+
+        int cmp = 0;
+        if (lhs_col->type == TYPE_INT) {
+            int lhs_val = *(int *)lhs;
+            int rhs_val = *(int *)rhs;
+            cmp = (lhs_val > rhs_val) - (lhs_val < rhs_val);
+        } else if (lhs_col->type == TYPE_FLOAT) {
+            float lhs_val = *(float *)lhs;
+            float rhs_val = *(float *)rhs;
+            cmp = (lhs_val > rhs_val) - (lhs_val < rhs_val);
+        } else {
+            cmp = strncmp(lhs, rhs, lhs_col->len);
+        }
+
+        switch (cond.op) {
+            case OP_EQ: return cmp == 0;
+            case OP_NE: return cmp != 0;
+            case OP_LT: return cmp < 0;
+            case OP_GT: return cmp > 0;
+            case OP_LE: return cmp <= 0;
+            case OP_GE: return cmp >= 0;
+        }
+        return false;
+    }
+
+    bool eval_conds(const std::vector<ColMeta> &rec_cols, const std::vector<Condition> &conds, const RmRecord *rec) {
+        for (const auto &cond : conds) {
+            if (!eval_cond(rec_cols, cond, rec)) {
+                return false;
+            }
+        }
+        return true;
     }
 };

@@ -21,14 +21,15 @@ std::unordered_map<txn_id_t, Transaction *> TransactionManager::txn_map = {};
  * @param {LogManager*} log_manager 日志管理器指针
  */
 Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manager) {
-    // Todo:
-    // 1. 判断传入事务参数是否为空指针
-    // 2. 如果为空指针，创建新事务
-    // 3. 把开始事务加入到全局事务表中
-    // 4. 返回当前事务指针
-    // 如果需要支持MVCC请在上述过程中添加代码
-    
-    return nullptr;
+    if (txn == nullptr) {
+        txn = new Transaction(next_txn_id_++);
+    }
+    txn->set_state(TransactionState::GROWING);
+    txn->set_start_ts(next_timestamp_++);
+
+    std::unique_lock<std::mutex> lock(latch_);
+    TransactionManager::txn_map[txn->get_transaction_id()] = txn;
+    return txn;
 }
 
 /**
@@ -37,14 +38,18 @@ Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manage
  * @param {LogManager*} log_manager 日志管理器指针
  */
 void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
-    // Todo:
-    // 1. 如果存在未提交的写操作，提交所有的写操作
-    // 2. 释放所有锁
-    // 3. 释放事务相关资源，eg.锁集
-    // 4. 把事务日志刷入磁盘中
-    // 5. 更新事务状态
-    // 如果需要支持MVCC请在上述过程中添加代码
-
+    if (txn == nullptr) {
+        return;
+    }
+    auto lock_set = txn->get_lock_set();
+    while (!lock_set->empty()) {
+        auto lock_data_id = *lock_set->begin();
+        lock_manager_->unlock(txn, lock_data_id);
+    }
+    if (log_manager != nullptr) {
+        log_manager->flush_log_to_disk();
+    }
+    txn->set_state(TransactionState::COMMITTED);
 }
 
 /**
@@ -53,12 +58,16 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
  * @param {LogManager} *log_manager 日志管理器指针
  */
 void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
-    // Todo:
-    // 1. 回滚所有写操作
-    // 2. 释放所有锁
-    // 3. 清空事务相关资源，eg.锁集
-    // 4. 把事务日志刷入磁盘中
-    // 5. 更新事务状态
-    // 如果需要支持MVCC请在上述过程中添加代码
-    
+    if (txn == nullptr) {
+        return;
+    }
+    auto lock_set = txn->get_lock_set();
+    while (!lock_set->empty()) {
+        auto lock_data_id = *lock_set->begin();
+        lock_manager_->unlock(txn, lock_data_id);
+    }
+    if (log_manager != nullptr) {
+        log_manager->flush_log_to_disk();
+    }
+    txn->set_state(TransactionState::ABORTED);
 }

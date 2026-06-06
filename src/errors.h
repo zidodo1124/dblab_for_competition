@@ -132,6 +132,11 @@ class IndexExistsError : public RMDBError {
     }
 };
 
+class UniqueConstraintViolationError : public RMDBError {
+   public:
+    UniqueConstraintViolationError(const std::string &tab_name) : RMDBError("Unique constraint violation: " + tab_name) {}
+};
+
 // QL errors
 class InvalidValueCountError : public RMDBError {
    public:

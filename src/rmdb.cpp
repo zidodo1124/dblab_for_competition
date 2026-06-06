@@ -15,6 +15,10 @@ See the Mulan PSL v2 for more details. */
 #include <signal.h>
 #include <unistd.h>
 #include <atomic>
+#include <cctype>
+#include <fstream>
+#include <optional>
+#include <sstream>
 
 #include "errors.h"
 #include "optimizer/optimizer.h"
@@ -48,6 +52,46 @@ pthread_mutex_t *buffer_mutex;
 pthread_mutex_t *sockfd_mutex;
 
 static jmp_buf jmpbuf;
+
+std::optional<std::string> parse_show_index_sql(const std::string &sql) {
+    std::string normalized = sql;
+    for (char &ch : normalized) {
+        if (ch == ';') {
+            ch = ' ';
+        }
+    }
+    std::istringstream iss(normalized);
+    std::string show;
+    std::string index;
+    std::string from;
+    std::string tab_name;
+    std::string extra;
+    if (!(iss >> show >> index >> from >> tab_name) || (iss >> extra)) {
+        return std::nullopt;
+    }
+    auto lower = [](std::string s) {
+        for (char &ch : s) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        return s;
+    };
+    auto valid_identifier = [](const std::string &s) {
+        if (s.empty() || !std::isalpha(static_cast<unsigned char>(s[0]))) {
+            return false;
+        }
+        for (char ch : s) {
+            if (ch != '_' && !std::isalnum(static_cast<unsigned char>(ch))) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (lower(show) == "show" && lower(index) == "index" && lower(from) == "from" && valid_identifier(tab_name)) {
+        return tab_name;
+    }
+    return std::nullopt;
+}
+
 void sigint_handler(int signo) {
     should_exit = true;
     log_manager->flush_log_to_disk();
@@ -63,6 +107,41 @@ void SetTransaction(txn_id_t *txn_id, Context *context) {
         context->txn_ = txn_manager->begin(nullptr, context->log_mgr_);
         *txn_id = context->txn_->get_transaction_id();
         context->txn_->set_txn_mode(false);
+    }
+}
+
+void execute_parse_tree(char *data_send, int &offset, txn_id_t *txn_id, Context *context) {
+    try {
+        std::shared_ptr<Query> query = analyze->do_analyze(ast::parse_tree);
+        std::shared_ptr<Plan> plan = optimizer->plan_query(query, context);
+        std::shared_ptr<PortalStmt> portalStmt = portal->start(plan, context);
+        portal->run(portalStmt, ql_manager.get(), txn_id, context);
+        portal->drop();
+    } catch (TransactionAbortException &e) {
+        std::string str = "abort\n";
+        memcpy(data_send, str.c_str(), str.length());
+        data_send[str.length()] = '\0';
+        offset = str.length();
+
+        txn_manager->abort(context->txn_, log_manager.get());
+        std::cout << e.GetInfo() << std::endl;
+
+        std::fstream outfile;
+        outfile.open("output.txt", std::ios::out | std::ios::app);
+        outfile << str;
+        outfile.close();
+    } catch (RMDBError &e) {
+        std::cerr << e.what() << std::endl;
+
+        memcpy(data_send, e.what(), e.get_msg_len());
+        data_send[e.get_msg_len()] = '\n';
+        data_send[e.get_msg_len() + 1] = '\0';
+        offset = e.get_msg_len() + 1;
+
+        std::fstream outfile;
+        outfile.open("output.txt",std::ios::out | std::ios::app);
+        outfile << "failure\n";
+        outfile.close();
     }
 }
 
@@ -120,57 +199,27 @@ void *client_handler(void *sock_fd) {
 
         // 用于判断是否已经调用了yy_delete_buffer来删除buf
         bool finish_analyze = false;
-        pthread_mutex_lock(buffer_mutex);
-        YY_BUFFER_STATE buf = yy_scan_string(data_recv);
-        if (yyparse() == 0) {
-            if (ast::parse_tree != nullptr) {
-                try {
-                    // analyze and rewrite
-                    std::shared_ptr<Query> query = analyze->do_analyze(ast::parse_tree);
+        ast::parse_tree.reset();
+        auto show_index_table = parse_show_index_sql(data_recv);
+        if (show_index_table.has_value()) {
+            ast::parse_tree = std::make_shared<ast::ShowIndex>(*show_index_table);
+            finish_analyze = true;
+            execute_parse_tree(data_send, offset, &txn_id, context);
+        } else {
+            pthread_mutex_lock(buffer_mutex);
+            YY_BUFFER_STATE buf = yy_scan_string(data_recv);
+            if (yyparse() == 0) {
+                if (ast::parse_tree != nullptr) {
                     yy_delete_buffer(buf);
                     finish_analyze = true;
                     pthread_mutex_unlock(buffer_mutex);
-                    // 优化器
-                    std::shared_ptr<Plan> plan = optimizer->plan_query(query, context);
-                    // portal
-                    std::shared_ptr<PortalStmt> portalStmt = portal->start(plan, context);
-                    portal->run(portalStmt, ql_manager.get(), &txn_id, context);
-                    portal->drop();
-                } catch (TransactionAbortException &e) {
-                    // 事务需要回滚，需要把abort信息返回给客户端并写入output.txt文件中
-                    std::string str = "abort\n";
-                    memcpy(data_send, str.c_str(), str.length());
-                    data_send[str.length()] = '\0';
-                    offset = str.length();
-
-                    // 回滚事务
-                    txn_manager->abort(context->txn_, log_manager.get());
-                    std::cout << e.GetInfo() << std::endl;
-
-                    std::fstream outfile;
-                    outfile.open("output.txt", std::ios::out | std::ios::app);
-                    outfile << str;
-                    outfile.close();
-                } catch (RMDBError &e) {
-                    // 遇到异常，需要打印failure到output.txt文件中，并发异常信息返回给客户端
-                    std::cerr << e.what() << std::endl;
-
-                    memcpy(data_send, e.what(), e.get_msg_len());
-                    data_send[e.get_msg_len()] = '\n';
-                    data_send[e.get_msg_len() + 1] = '\0';
-                    offset = e.get_msg_len() + 1;
-
-                    // 将报错信息写入output.txt
-                    std::fstream outfile;
-                    outfile.open("output.txt",std::ios::out | std::ios::app);
-                    outfile << "failure\n";
-                    outfile.close();
+                    execute_parse_tree(data_send, offset, &txn_id, context);
                 }
             }
-        }
-        if(finish_analyze == false) {
-            yy_delete_buffer(buf);
-            pthread_mutex_unlock(buffer_mutex);
+            if(finish_analyze == false) {
+                yy_delete_buffer(buf);
+                pthread_mutex_unlock(buffer_mutex);
+            }
         }
         // future TODO: 格式化 sql_handler.result, 传给客户端
         // send result with fixed format, use protobuf in the future

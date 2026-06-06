@@ -10,6 +10,7 @@ See the Mulan PSL v2 for more details. */
 
 #include "planner.h"
 
+#include <algorithm>
 #include <memory>
 
 #include "execution/executor_delete.h"
@@ -22,16 +23,73 @@ See the Mulan PSL v2 for more details. */
 #include "index/ix.h"
 #include "record_printer.h"
 
-// 目前的索引匹配规则为：完全匹配索引字段，且全部为单点查询，不会自动调整where条件的顺序
 bool Planner::get_index_cols(std::string tab_name, std::vector<Condition> curr_conds, std::vector<std::string>& index_col_names) {
     index_col_names.clear();
-    for(auto& cond: curr_conds) {
-        if(cond.is_rhs_val && cond.op == OP_EQ && cond.lhs_col.tab_name.compare(tab_name) == 0)
-            index_col_names.push_back(cond.lhs_col.col_name);
-    }
     TabMeta& tab = sm_manager_->db_.get_table(tab_name);
-    if(tab.is_index(index_col_names)) return true;
-    return false;
+
+    std::map<CompOp, CompOp> swap_op = {
+        {OP_EQ, OP_EQ}, {OP_NE, OP_NE}, {OP_LT, OP_GT}, {OP_GT, OP_LT}, {OP_LE, OP_GE}, {OP_GE, OP_LE},
+    };
+
+    std::vector<Condition> normalized;
+    for (auto cond : curr_conds) {
+        if (!cond.is_rhs_val) {
+            continue;
+        }
+        if (cond.lhs_col.tab_name == tab_name) {
+            normalized.push_back(cond);
+        } else if (cond.rhs_col.tab_name == tab_name) {
+            std::swap(cond.lhs_col, cond.rhs_col);
+            cond.op = swap_op.at(cond.op);
+            normalized.push_back(cond);
+        }
+    }
+
+    int best_prefix_len = 0;
+    bool best_has_range = false;
+    std::vector<std::string> best_cols;
+    for (auto &index : tab.indexes) {
+        int prefix_len = 0;
+        bool has_range = false;
+        for (auto &col : index.cols) {
+            bool has_eq = false;
+            bool has_range_on_col = false;
+            for (auto &cond : normalized) {
+                if (cond.lhs_col.col_name != col.name) {
+                    continue;
+                }
+                if (cond.op == OP_EQ) {
+                    has_eq = true;
+                } else if (cond.op != OP_NE) {
+                    has_range_on_col = true;
+                }
+            }
+            if (has_eq) {
+                prefix_len++;
+                continue;
+            }
+            if (has_range_on_col) {
+                prefix_len++;
+                has_range = true;
+            }
+            break;
+        }
+        if (prefix_len > best_prefix_len ||
+            (prefix_len == best_prefix_len && has_range && !best_has_range)) {
+            best_prefix_len = prefix_len;
+            best_has_range = has_range;
+            best_cols.clear();
+            for (auto &col : index.cols) {
+                best_cols.push_back(col.name);
+            }
+        }
+    }
+
+    if (best_prefix_len == 0) {
+        return false;
+    }
+    index_col_names = std::move(best_cols);
+    return true;
 }
 
 /**

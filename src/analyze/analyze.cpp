@@ -10,6 +10,8 @@ See the Mulan PSL v2 for more details. */
 
 #include "analyze.h"
 
+#include <algorithm>
+
 /**
  * @description: 分析器，进行语义分析和查询重写，需要检查不符合语义规定的部分
  * @param {shared_ptr<ast::TreeNode>} parse parser生成的结果集
@@ -31,10 +33,25 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
                 query->tab_display_names[tab_name] = tab_name;
             }
         }
+        auto resolve_table_alias = [&](std::string &tab_name) {
+            if (tab_name.empty()) {
+                return;
+            }
+            if (std::find(query->tables.begin(), query->tables.end(), tab_name) != query->tables.end()) {
+                return;
+            }
+            for (const auto &entry : query->tab_display_names) {
+                if (entry.second == tab_name) {
+                    tab_name = entry.first;
+                    return;
+                }
+            }
+        };
 
         // 处理target list，再target list中添加上表名，例如 a.id
         for (auto &sv_sel_col : x->cols) {
             TabCol sel_col = {.tab_name = sv_sel_col->tab_name, .col_name = sv_sel_col->col_name};
+            resolve_table_alias(sel_col.tab_name);
             query->cols.push_back(sel_col);
         }
         
@@ -54,6 +71,15 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
         }
         //处理where条件
         get_clause(x->conds, query->conds);
+        for (auto &cond : query->conds) {
+            resolve_table_alias(cond.lhs_col.tab_name);
+            if (!cond.is_rhs_val) {
+                resolve_table_alias(cond.rhs_col.tab_name);
+            }
+        }
+        if (x->has_sort && x->order != nullptr && x->order->cols != nullptr) {
+            resolve_table_alias(x->order->cols->tab_name);
+        }
         check_clause(query->tables, query->conds);
     } else if (auto x = std::dynamic_pointer_cast<ast::UpdateStmt>(parse)) {
         TabMeta &tab = sm_manager_->db_.get_table(x->tab_name);

@@ -20,6 +20,8 @@ See the Mulan PSL v2 for more details. */
 #include "index/ix.h"
 #include "record_printer.h"
 
+#include <fstream>
+
 const char *help_info = "Supported SQL syntax:\n"
                    "  command ;\n"
                    "command:\n"
@@ -149,7 +151,7 @@ void QlManager::run_cmd_utility(std::shared_ptr<Plan> plan, txn_id_t *txn_id, Co
 }
 
 // 执行select语句，select语句的输出除了需要返回客户端外，还需要写入output.txt文件中
-void QlManager::select_from(std::unique_ptr<AbstractExecutor> executorTreeRoot, std::vector<TabCol> sel_cols, 
+void QlManager::select_from(std::unique_ptr<AbstractExecutor> executorTreeRoot, std::vector<TabCol> sel_cols,
                             Context *context) {
     std::vector<std::string> captions;
     captions.reserve(sel_cols.size());
@@ -205,6 +207,25 @@ void QlManager::select_from(std::unique_ptr<AbstractExecutor> executorTreeRoot, 
     rec_printer.print_separator(context);
     // Print record count into buffer
     RecordPrinter::print_record_count(num_rec, context);
+}
+
+// 执行 EXPLAIN ANALYZE，只消费结果用于统计，不输出查询结果集
+void QlManager::explain_analyze(std::unique_ptr<AbstractExecutor> executorTreeRoot, Context *context) {
+    for (executorTreeRoot->beginTuple(); !executorTreeRoot->is_end(); executorTreeRoot->nextTuple()) {
+        auto tuple = executorTreeRoot->Next();
+        (void)tuple;
+    }
+
+    std::string plan = executorTreeRoot->explain();
+    if (context->data_send_ != nullptr && context->offset_ != nullptr) {
+        memcpy(context->data_send_ + *(context->offset_), plan.c_str(), plan.length());
+        *(context->offset_) += plan.length();
+    }
+
+    std::fstream outfile;
+    outfile.open("output.txt", std::ios::out | std::ios::app);
+    outfile << plan;
+    outfile.close();
 }
 
 // 执行DML语句

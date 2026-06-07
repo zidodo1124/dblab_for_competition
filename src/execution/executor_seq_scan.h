@@ -30,9 +30,11 @@ class SeqScanExecutor : public AbstractExecutor {
     std::unique_ptr<RecScan> scan_;     // table_iterator
 
     SmManager *sm_manager_;
+    bool count_filtered_rows_;
 
    public:
-    SeqScanExecutor(SmManager *sm_manager, std::string tab_name, std::vector<Condition> conds, Context *context) {
+    SeqScanExecutor(SmManager *sm_manager, std::string tab_name, std::vector<Condition> conds, Context *context,
+                    bool count_filtered_rows = false) {
         sm_manager_ = sm_manager;
         tab_name_ = std::move(tab_name);
         conds_ = std::move(conds);
@@ -44,14 +46,21 @@ class SeqScanExecutor : public AbstractExecutor {
         context_ = context;
 
         fed_conds_ = conds_;
+        count_filtered_rows_ = count_filtered_rows;
     }
 
     void beginTuple() override {
         scan_ = std::make_unique<RmScan>(fh_);
         while (!scan_->is_end()) {
+            if (!count_filtered_rows_) {
+                rows_++;
+            }
             rid_ = scan_->rid();
             auto rec = fh_->get_record(rid_, context_);
             if (eval_conds(cols_, fed_conds_, rec.get())) {
+                if (count_filtered_rows_) {
+                    rows_++;
+                }
                 return;
             }
             scan_->next();
@@ -64,9 +73,15 @@ class SeqScanExecutor : public AbstractExecutor {
         }
         scan_->next();
         while (!scan_->is_end()) {
+            if (!count_filtered_rows_) {
+                rows_++;
+            }
             rid_ = scan_->rid();
             auto rec = fh_->get_record(rid_, context_);
             if (eval_conds(cols_, fed_conds_, rec.get())) {
+                if (count_filtered_rows_) {
+                    rows_++;
+                }
                 return;
             }
             scan_->next();
@@ -86,4 +101,12 @@ class SeqScanExecutor : public AbstractExecutor {
     ColMeta get_col_offset(const TabCol &target) override { return *get_col(cols_, target); }
 
     Rid &rid() override { return rid_; }
+
+    std::vector<std::string> tables() const override { return {tab_name_}; }
+
+    std::string explain(int depth = 0) const override {
+        std::ostringstream os;
+        os << indent(depth) << "Scan(table=" << tab_name_ << ", type=SeqScan, rows=" << rows_ << ")\n";
+        return os.str();
+    }
 };

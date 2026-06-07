@@ -20,11 +20,19 @@ class ProjectionExecutor : public AbstractExecutor {
     std::unique_ptr<AbstractExecutor> prev_;        // 投影节点的儿子节点
     std::vector<ColMeta> cols_;                     // 需要投影的字段
     size_t len_;                                    // 字段总长度
-    std::vector<size_t> sel_idxs_;                  
+    std::vector<size_t> sel_idxs_;
+    std::vector<TabCol> sel_cols_;
+    bool display_all_;
+    std::map<std::string, std::string> tab_display_names_;
 
    public:
-    ProjectionExecutor(std::unique_ptr<AbstractExecutor> prev, const std::vector<TabCol> &sel_cols) {
+    ProjectionExecutor(std::unique_ptr<AbstractExecutor> prev, const std::vector<TabCol> &sel_cols,
+                       bool display_all = false,
+                       std::map<std::string, std::string> tab_display_names = {}) {
         prev_ = std::move(prev);
+        sel_cols_ = sel_cols;
+        display_all_ = display_all;
+        tab_display_names_ = std::move(tab_display_names);
 
         size_t curr_offset = 0;
         auto &prev_cols = prev_->cols();
@@ -39,9 +47,19 @@ class ProjectionExecutor : public AbstractExecutor {
         len_ = curr_offset;
     }
 
-    void beginTuple() override { prev_->beginTuple(); }
+    void beginTuple() override {
+        prev_->beginTuple();
+        if (!prev_->is_end()) {
+            rows_++;
+        }
+    }
 
-    void nextTuple() override { prev_->nextTuple(); }
+    void nextTuple() override {
+        prev_->nextTuple();
+        if (!prev_->is_end()) {
+            rows_++;
+        }
+    }
 
     std::unique_ptr<RmRecord> Next() override {
         auto prev_rec = prev_->Next();
@@ -63,4 +81,23 @@ class ProjectionExecutor : public AbstractExecutor {
     ColMeta get_col_offset(const TabCol &target) override { return *get_col(cols_, target); }
 
     Rid &rid() override { return _abstract_rid; }
+
+    std::vector<std::string> tables() const override { return prev_->tables(); }
+
+    std::string explain(int depth = 0) const override {
+        std::vector<std::string> col_strs;
+        if (display_all_) {
+            col_strs.push_back("*");
+        } else {
+            col_strs.reserve(sel_cols_.size());
+            for (const auto &col : sel_cols_) {
+                col_strs.push_back(format_col(col, tab_display_names_));
+            }
+        }
+        std::ostringstream os;
+        os << indent(depth) << "Project(columns=[" << join_strings(col_strs, !display_all_)
+           << "], rows=" << rows_ << ")\n";
+        os << prev_->explain(depth + 1);
+        return os.str();
+    }
 };

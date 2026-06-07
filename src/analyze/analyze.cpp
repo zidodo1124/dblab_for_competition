@@ -22,8 +22,14 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
     {
         // 处理表名
         query->tables = std::move(x->tabs);
+        query->is_explain_analyze = x->is_explain_analyze;
+        query->select_all = x->select_all;
+        query->tab_display_names = x->tab_display_names;
         for (const auto &tab_name : query->tables) {
             sm_manager_->db_.get_table(tab_name);
+            if (query->tab_display_names.find(tab_name) == query->tab_display_names.end()) {
+                query->tab_display_names[tab_name] = tab_name;
+            }
         }
 
         // 处理target list，再target list中添加上表名，例如 a.id

@@ -13,11 +13,14 @@ See the Mulan PSL v2 for more details. */
 #include <cassert>
 #include <cstring>
 #include <memory>
+#include <map>
 #include <string>
 #include <vector>
+#include "common/common.h"
 #include "parser/ast.h"
 
 #include "parser/parser.h"
+#include "system/sm.h"
 
 typedef enum PlanTag{
     T_Invalid = 1,
@@ -34,6 +37,7 @@ typedef enum PlanTag{
     T_Update,
     T_Delete,
     T_select,
+    T_ExplainAnalyze,
     T_Transaction_begin,
     T_Transaction_commit,
     T_Transaction_abort,
@@ -43,6 +47,7 @@ typedef enum PlanTag{
     T_NestLoop,
     T_SortMerge,    // sort merge join
     T_Sort,
+    T_Filter,
     T_Projection
 } PlanTag;
 
@@ -83,12 +88,14 @@ class ScanPlan : public Plan
 class JoinPlan : public Plan
 {
     public:
-        JoinPlan(PlanTag tag, std::shared_ptr<Plan> left, std::shared_ptr<Plan> right, std::vector<Condition> conds)
+        JoinPlan(PlanTag tag, std::shared_ptr<Plan> left, std::shared_ptr<Plan> right, std::vector<Condition> conds,
+                 std::map<std::string, std::string> tab_display_names = {})
         {
             Plan::tag = tag;
             left_ = std::move(left);
             right_ = std::move(right);
             conds_ = std::move(conds);
+            tab_display_names_ = std::move(tab_display_names);
             type = INNER_JOIN;
         }
         ~JoinPlan(){}
@@ -98,23 +105,46 @@ class JoinPlan : public Plan
         std::shared_ptr<Plan> right_;
         // 连接条件
         std::vector<Condition> conds_;
+        std::map<std::string, std::string> tab_display_names_;
         // future TODO: 后续可以支持的连接类型
         JoinType type;
+};
+
+class FilterPlan : public Plan
+{
+    public:
+        FilterPlan(PlanTag tag, std::shared_ptr<Plan> subplan, std::vector<Condition> conds,
+                   std::map<std::string, std::string> tab_display_names = {})
+        {
+            Plan::tag = tag;
+            subplan_ = std::move(subplan);
+            conds_ = std::move(conds);
+            tab_display_names_ = std::move(tab_display_names);
+        }
+        ~FilterPlan(){}
+        std::shared_ptr<Plan> subplan_;
+        std::vector<Condition> conds_;
+        std::map<std::string, std::string> tab_display_names_;
 };
 
 class ProjectionPlan : public Plan
 {
     public:
-        ProjectionPlan(PlanTag tag, std::shared_ptr<Plan> subplan, std::vector<TabCol> sel_cols)
+        ProjectionPlan(PlanTag tag, std::shared_ptr<Plan> subplan, std::vector<TabCol> sel_cols,
+                       bool display_all = false, std::map<std::string, std::string> tab_display_names = {})
         {
             Plan::tag = tag;
             subplan_ = std::move(subplan);
             sel_cols_ = std::move(sel_cols);
+            display_all_ = display_all;
+            tab_display_names_ = std::move(tab_display_names);
         }
         ~ProjectionPlan(){}
         std::shared_ptr<Plan> subplan_;
         std::vector<TabCol> sel_cols_;
-        
+        bool display_all_;
+        std::map<std::string, std::string> tab_display_names_;
+
 };
 
 class SortPlan : public Plan

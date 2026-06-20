@@ -448,11 +448,9 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         for (const auto &col : query->cols) {
             add_col(pushed_cols[col.tab_name], col);
         }
-        for (const auto &cond : query->conds) {
+        for (const auto &cond : join_conds) {
             add_col(pushed_cols[cond.lhs_col.tab_name], cond.lhs_col);
-            if (!cond.is_rhs_val) {
-                add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
-            }
+            add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
         }
         for (auto &entry : pushed_cols) {
             sort_cols_for_display(entry.second, query->tab_display_names);

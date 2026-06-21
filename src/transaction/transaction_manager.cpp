@@ -294,6 +294,51 @@ void TransactionManager::check_write_conflict(const std::string &tab_name, const
     }
 }
 
+void TransactionManager::check_insert_conflict(const std::string &tab_name, const RmRecord &record, Transaction *txn) {
+    if (txn == nullptr) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mvcc_latch_);
+    const auto &tab = sm_manager_->db_.get_table(tab_name);
+    for (auto &entry : versions_) {
+        if (entry.first.rfind(tab_name + "#", 0) != 0 || entry.second.empty()) {
+            continue;
+        }
+        Version *latest = nullptr;
+        for (auto rit = entry.second.rbegin(); rit != entry.second.rend(); ++rit) {
+            if (!rit->aborted && !rit->old_image) {
+                latest = &(*rit);
+                break;
+            }
+        }
+        if (latest == nullptr || latest->txn_id == txn->get_transaction_id()) {
+            continue;
+        }
+
+        bool same_logical_record = false;
+        if (!tab.indexes.empty()) {
+            for (auto &index : tab.indexes) {
+                auto lhs = make_index_key(record, index);
+                auto rhs = make_index_key(latest->record, index);
+                if (memcmp(lhs.data(), rhs.data(), index.col_tot_len) == 0) {
+                    same_logical_record = true;
+                    break;
+                }
+            }
+        } else if (record.size == latest->record.size &&
+                   memcmp(record.data, latest->record.data, record.size) == 0) {
+            same_logical_record = true;
+        }
+
+        if (!same_logical_record) {
+            continue;
+        }
+        if (!latest->committed || latest->commit_ts > txn->get_start_ts()) {
+            throw TransactionAbortException(txn->get_transaction_id(), AbortReason::DEADLOCK_PREVENTION);
+        }
+    }
+}
+
 void TransactionManager::append_insert_version(const std::string &tab_name, const Rid &rid, const RmRecord &record,
                                                Transaction *txn) {
     if (txn == nullptr) {

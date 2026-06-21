@@ -61,6 +61,9 @@ class InsertExecutor : public AbstractExecutor {
         }
         std::vector<std::vector<char>> keys;
         keys.reserve(tab_.indexes.size());
+        if (context_->txn_mgr_ != nullptr) {
+            context_->txn_mgr_->check_insert_conflict(tab_name_, rec, context_->txn_);
+        }
         for (auto &index : tab_.indexes) {
             auto ih = sm_manager_->ihs_.at(sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols)).get();
             auto key = make_index_key(&rec, index);

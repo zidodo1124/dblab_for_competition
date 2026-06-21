@@ -83,6 +83,7 @@ public:
     std::unique_ptr<RmRecord> get_visible_record(const std::string &tab_name, const Rid &rid, RmFileHandle *fh,
                                                   Context *context);
     void check_write_conflict(const std::string &tab_name, const Rid &rid, Transaction *txn);
+    void check_insert_conflict(const std::string &tab_name, const RmRecord &record, Transaction *txn);
     void record_select_predicate(const std::string &tab_name, const std::vector<Condition> &conds, Transaction *txn);
     void record_select_record(const std::string &tab_name, const Rid &rid, Transaction *txn);
     void check_ser_write(const std::string &tab_name, const Rid &rid, const RmRecord *old_record,

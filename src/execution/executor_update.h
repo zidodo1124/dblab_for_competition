@@ -116,6 +116,9 @@ class UpdateExecutor : public AbstractExecutor {
 
         for (size_t i = 0; i < rids_.size(); ++i) {
             fh_->update_record(rids_[i], new_recs[i].data, context_);
+            if (context_->txn_ != nullptr) {
+                context_->txn_->append_write_record(new WriteRecord(WType::UPDATE_TUPLE, tab_name_, rids_[i], old_recs[i]));
+            }
         }
 
         for (size_t i = 0; i < rids_.size(); ++i) {

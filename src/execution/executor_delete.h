@@ -50,6 +50,9 @@ class DeleteExecutor : public AbstractExecutor {
                 ih->delete_entry(key.data(), context_->txn_);
             }
             fh_->delete_record(rid, context_);
+            if (context_->txn_ != nullptr) {
+                context_->txn_->append_write_record(new WriteRecord(WType::DELETE_TUPLE, tab_name_, rid, *rec));
+            }
         }
         return nullptr;
     }

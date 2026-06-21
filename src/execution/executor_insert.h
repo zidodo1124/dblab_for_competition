@@ -80,6 +80,9 @@ class InsertExecutor : public AbstractExecutor {
             auto ih = sm_manager_->ihs_.at(sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols)).get();
             ih->insert_entry(keys[i].data(), rid_, context_->txn_);
         }
+        if (context_->txn_ != nullptr) {
+            context_->txn_->append_write_record(new WriteRecord(WType::INSERT_TUPLE, tab_name_, rid_));
+        }
         return nullptr;
     }
     Rid &rid() override { return rid_; }

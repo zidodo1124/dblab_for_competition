@@ -89,6 +89,7 @@ public:
     void check_ser_write(const std::string &tab_name, const Rid &rid, const RmRecord *old_record,
                          const RmRecord *new_record, Transaction *txn);
     void cleanup_abort(Transaction *txn);
+    std::unique_lock<std::mutex> acquire_write_latch() { return std::unique_lock<std::mutex>(write_latch_); }
 
     /**
      * @description: 获取事务ID为txn_id的事务对象
@@ -204,6 +205,7 @@ private:
     LockManager *lock_manager_;
 
     std::mutex mvcc_latch_;
+    std::mutex write_latch_;
     std::unordered_map<std::string, std::vector<Version>> versions_;
     std::unordered_map<txn_id_t, TxnSerState> ser_states_;
     std::unordered_map<txn_id_t, std::unordered_set<txn_id_t>> rw_edges_;

@@ -37,6 +37,8 @@ class DeleteExecutor : public AbstractExecutor {
     }
 
     std::unique_ptr<RmRecord> Next() override {
+        auto write_guard = context_->txn_mgr_ != nullptr ? context_->txn_mgr_->acquire_write_latch()
+                                                         : std::unique_lock<std::mutex>();
         for (auto &rid : rids_) {
             if (context_->txn_mgr_ != nullptr) {
                 context_->txn_mgr_->check_write_conflict(tab_name_, rid, context_->txn_);

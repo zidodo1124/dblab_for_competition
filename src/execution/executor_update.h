@@ -35,8 +35,8 @@ class UpdateExecutor : public AbstractExecutor {
         return key;
     }
 
-    bool rid_in_targets(const Rid &rid) {
-        for (auto &target : rids_) {
+    bool rid_in_targets(const Rid &rid, const std::vector<Rid> &targets) {
+        for (auto &target : targets) {
             if (target == rid) {
                 return true;
             }
@@ -57,6 +57,8 @@ class UpdateExecutor : public AbstractExecutor {
         context_ = context;
     }
     std::unique_ptr<RmRecord> Next() override {
+        auto write_guard = context_->txn_mgr_ != nullptr ? context_->txn_mgr_->acquire_write_latch()
+                                                         : std::unique_lock<std::mutex>();
         std::vector<RmRecord> old_recs;
         std::vector<RmRecord> new_recs;
         std::vector<Rid> target_rids;
@@ -119,7 +121,7 @@ class UpdateExecutor : public AbstractExecutor {
                 std::vector<Rid> existing;
                 if (ih->get_value(key.data(), &existing, context_->txn_)) {
                     for (auto &exist_rid : existing) {
-                        if (!rid_in_targets(exist_rid)) {
+                        if (!rid_in_targets(exist_rid, target_rids)) {
                             throw UniqueConstraintViolationError(tab_name_);
                         }
                     }

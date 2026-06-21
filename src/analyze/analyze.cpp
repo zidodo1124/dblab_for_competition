@@ -89,7 +89,23 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
             SetClause set_clause;
             set_clause.lhs = check_column(all_cols, {.tab_name = x->tab_name, .col_name = sv_set_clause->col_name});
             set_clause.rhs = convert_sv_value(sv_set_clause->val);
+            set_clause.is_self_add = sv_set_clause->is_self_add;
             auto target_col = tab.get_col(set_clause.lhs.col_name);
+            if (set_clause.is_self_add) {
+                if (sv_set_clause->rhs_col_name != sv_set_clause->col_name) {
+                    throw RMDBError("Only self-referenced update is supported");
+                }
+                if (set_clause.rhs.type == TYPE_INT) {
+                    set_clause.add_int = set_clause.rhs.int_val;
+                    set_clause.add_float = static_cast<float>(set_clause.rhs.int_val);
+                    set_clause.add_is_float = false;
+                } else if (set_clause.rhs.type == TYPE_FLOAT) {
+                    set_clause.add_float = set_clause.rhs.float_val;
+                    set_clause.add_is_float = true;
+                } else {
+                    throw IncompatibleTypeError(coltype2str(target_col->type), coltype2str(set_clause.rhs.type));
+                }
+            }
             if (target_col->type == TYPE_FLOAT && set_clause.rhs.type == TYPE_INT) {
                 set_clause.rhs.set_float(static_cast<float>(set_clause.rhs.int_val));
             }

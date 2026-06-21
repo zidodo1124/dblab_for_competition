@@ -33,6 +33,7 @@ typedef enum PlanTag{
     T_CreateIndex,
     T_DropIndex,
     T_SetKnob,
+    T_SetIsolation,
     T_Insert,
     T_Update,
     T_Delete,
@@ -228,6 +229,16 @@ class SetKnobPlan : public Plan
         }
     ast::SetKnobType set_knob_type_;
     bool bool_value_;
+};
+
+class SetIsolationPlan : public Plan
+{
+    public:
+        explicit SetIsolationPlan(IsolationLevel isolation_level) {
+            Plan::tag = T_SetIsolation;
+            isolation_level_ = isolation_level;
+        }
+    IsolationLevel isolation_level_;
 };
 
 class plannerInfo{

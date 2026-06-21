@@ -27,7 +27,8 @@ class SeqScanExecutor : public AbstractExecutor {
     std::vector<Condition> fed_conds_;  // 同conds_，两个字段相同
 
     Rid rid_;
-    std::unique_ptr<RecScan> scan_;     // table_iterator
+    std::vector<std::pair<Rid, RmRecord>> visible_records_;
+    size_t cursor_ = 0;
 
     SmManager *sm_manager_;
     bool count_filtered_rows_;
@@ -50,49 +51,65 @@ class SeqScanExecutor : public AbstractExecutor {
     }
 
     void beginTuple() override {
-        scan_ = std::make_unique<RmScan>(fh_);
-        while (!scan_->is_end()) {
+        visible_records_.clear();
+        cursor_ = 0;
+        if (context_->txn_mgr_ != nullptr) {
+            visible_records_ = context_->txn_mgr_->get_visible_records(tab_name_, fh_, context_);
+        } else {
+            for (RmScan scan(fh_); !scan.is_end(); scan.next()) {
+                auto rec = fh_->get_record(scan.rid(), context_);
+                visible_records_.emplace_back(scan.rid(), *rec);
+            }
+        }
+        if (context_->is_select_ && context_->txn_mgr_ != nullptr) {
+            context_->txn_mgr_->record_select_predicate(tab_name_, fed_conds_, context_->txn_);
+        }
+        while (cursor_ < visible_records_.size()) {
             if (!count_filtered_rows_) {
                 rows_++;
             }
-            rid_ = scan_->rid();
-            auto rec = fh_->get_record(rid_, context_);
-            if (eval_conds(cols_, fed_conds_, rec.get())) {
+            rid_ = visible_records_[cursor_].first;
+            if (eval_conds(cols_, fed_conds_, &visible_records_[cursor_].second)) {
                 if (count_filtered_rows_) {
                     rows_++;
                 }
                 return;
             }
-            scan_->next();
+            cursor_++;
         }
     }
 
     void nextTuple() override {
-        if (scan_ == nullptr || scan_->is_end()) {
+        if (cursor_ >= visible_records_.size()) {
             return;
         }
-        scan_->next();
-        while (!scan_->is_end()) {
+        cursor_++;
+        while (cursor_ < visible_records_.size()) {
             if (!count_filtered_rows_) {
                 rows_++;
             }
-            rid_ = scan_->rid();
-            auto rec = fh_->get_record(rid_, context_);
-            if (eval_conds(cols_, fed_conds_, rec.get())) {
+            rid_ = visible_records_[cursor_].first;
+            if (eval_conds(cols_, fed_conds_, &visible_records_[cursor_].second)) {
                 if (count_filtered_rows_) {
                     rows_++;
                 }
                 return;
             }
-            scan_->next();
+            cursor_++;
         }
     }
 
     std::unique_ptr<RmRecord> Next() override {
-        return fh_->get_record(rid_, context_);
+        if (cursor_ >= visible_records_.size()) {
+            return nullptr;
+        }
+        if (context_->is_select_ && context_->txn_mgr_ != nullptr) {
+            context_->txn_mgr_->record_select_record(tab_name_, rid_, context_->txn_);
+        }
+        return std::make_unique<RmRecord>(visible_records_[cursor_].second);
     }
 
-    bool is_end() const override { return scan_ == nullptr || scan_->is_end(); }
+    bool is_end() const override { return cursor_ >= visible_records_.size(); }
 
     size_t tupleLen() const override { return len_; }
 

@@ -161,9 +161,15 @@ struct Col : public Expr {
 struct SetClause : public TreeNode {
     std::string col_name;
     std::shared_ptr<Value> val;
+    bool is_self_add = false;
+    std::string rhs_col_name;
 
     SetClause(std::string col_name_, std::shared_ptr<Value> val_) :
             col_name(std::move(col_name_)), val(std::move(val_)) {}
+
+    SetClause(std::string col_name_, std::string rhs_col_name_, std::shared_ptr<Value> val_) :
+            col_name(std::move(col_name_)), val(std::move(val_)), is_self_add(true),
+            rhs_col_name(std::move(rhs_col_name_)) {}
 };
 
 struct BinaryExpr : public TreeNode {
@@ -258,6 +264,12 @@ struct SetStmt : public TreeNode {
 
     SetStmt(SetKnobType &type, bool bool_value) : 
         set_knob_type_(type), bool_val_(bool_value) { }
+};
+
+struct SetTransactionIsolation : public TreeNode {
+    bool serializable;
+
+    explicit SetTransactionIsolation(bool serializable_) : serializable(serializable_) {}
 };
 
 // Semantic value

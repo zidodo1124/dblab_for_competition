@@ -36,7 +36,8 @@ class IndexScanExecutor : public AbstractExecutor {
     IndexMeta index_meta_;
 
     Rid rid_;
-    std::unique_ptr<RecScan> scan_;
+    std::vector<std::pair<Rid, RmRecord>> visible_records_;
+    size_t cursor_ = 0;
     IxIndexHandle *ih_;
 
     SmManager *sm_manager_;
@@ -170,13 +171,12 @@ class IndexScanExecutor : public AbstractExecutor {
     }
 
     void advance_to_valid() {
-        while (scan_ != nullptr && !scan_->is_end()) {
-            rid_ = scan_->rid();
-            auto rec = fh_->get_record(rid_, context_);
-            if (eval_conds(cols_, fed_conds_, rec.get())) {
+        while (cursor_ < visible_records_.size()) {
+            rid_ = visible_records_[cursor_].first;
+            if (eval_conds(cols_, fed_conds_, &visible_records_[cursor_].second)) {
                 return;
             }
-            scan_->next();
+            cursor_++;
         }
     }
 
@@ -198,26 +198,41 @@ class IndexScanExecutor : public AbstractExecutor {
     }
 
     void beginTuple() override {
-        Iid lower;
-        Iid upper;
-        build_index_range(lower, upper);
-        scan_ = std::make_unique<IxScan>(ih_, lower, upper, sm_manager_->get_bpm());
+        visible_records_.clear();
+        cursor_ = 0;
+        if (context_->txn_mgr_ != nullptr) {
+            visible_records_ = context_->txn_mgr_->get_visible_records(tab_name_, fh_, context_);
+        } else {
+            for (RmScan scan(fh_); !scan.is_end(); scan.next()) {
+                auto rec = fh_->get_record(scan.rid(), context_);
+                visible_records_.emplace_back(scan.rid(), *rec);
+            }
+        }
+        if (context_->is_select_ && context_->txn_mgr_ != nullptr) {
+            context_->txn_mgr_->record_select_predicate(tab_name_, fed_conds_, context_->txn_);
+        }
         advance_to_valid();
     }
 
     void nextTuple() override {
-        if (scan_ == nullptr || scan_->is_end()) {
+        if (cursor_ >= visible_records_.size()) {
             return;
         }
-        scan_->next();
+        cursor_++;
         advance_to_valid();
     }
 
     std::unique_ptr<RmRecord> Next() override {
-        return fh_->get_record(rid_, context_);
+        if (cursor_ >= visible_records_.size()) {
+            return nullptr;
+        }
+        if (context_->is_select_ && context_->txn_mgr_ != nullptr) {
+            context_->txn_mgr_->record_select_record(tab_name_, rid_, context_->txn_);
+        }
+        return std::make_unique<RmRecord>(visible_records_[cursor_].second);
     }
 
-    bool is_end() const override { return scan_ == nullptr || scan_->is_end(); }
+    bool is_end() const override { return cursor_ >= visible_records_.size(); }
 
     size_t tupleLen() const override { return len_; }
 

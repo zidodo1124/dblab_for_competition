@@ -85,4 +85,8 @@ struct Condition {
 struct SetClause {
     TabCol lhs;
     Value rhs;
+    bool is_self_add = false;
+    int add_int = 0;
+    float add_float = 0;
+    bool add_is_float = false;
 };

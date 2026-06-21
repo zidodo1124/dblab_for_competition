@@ -39,7 +39,7 @@ identifier {alpha}(_|{alpha}|{digit})*
 value_int {sign}?{digit}+
 value_float {sign}?{digit}+\.({digit}+)?
 value_string '[^']*'
-single_op ";"|"("|")"|","|"*"|"="|">"|"<"|"."
+single_op ";"|"("|")"|","|"*"|"="|">"|"<"|"."|"+"
 
 %x STATE_COMMENT
 
@@ -73,6 +73,11 @@ single_op ";"|"("|")"|","|"*"|"="|">"|"<"|"."
 "WHERE" { return WHERE; }
 "UPDATE" { return UPDATE; }
 "SET" { return SET; }
+"TRANSACTION" { return TRANSACTION; }
+"ISOLATION" { return ISOLATION; }
+"LEVEL" { return LEVEL; }
+"SNAPSHOT" { return SNAPSHOT; }
+"SERIALIZABLE" { return SERIALIZABLE; }
 "SELECT" { return SELECT; }
 "INT" { return INT; }
 "CHAR" { return CHAR; }

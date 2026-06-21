@@ -63,13 +63,32 @@ class UpdateExecutor : public AbstractExecutor {
         new_recs.reserve(rids_.size());
 
         for (auto &rid : rids_) {
-            auto old_rec = fh_->get_record(rid, context_);
+            if (context_->txn_mgr_ != nullptr) {
+                context_->txn_mgr_->check_write_conflict(tab_name_, rid, context_->txn_);
+            }
+            auto old_rec = context_->txn_mgr_ != nullptr
+                               ? context_->txn_mgr_->get_visible_record(tab_name_, rid, fh_, context_)
+                               : fh_->get_record(rid, context_);
+            if (old_rec == nullptr) {
+                continue;
+            }
             old_recs.emplace_back(*old_rec);
             new_recs.emplace_back(fh_->get_file_hdr().record_size);
             memcpy(new_recs.back().data, old_rec->data, new_recs.back().size);
             for (auto &set_clause : set_clauses_) {
                 auto col = tab_.get_col(set_clause.lhs.col_name);
                 auto &val = set_clause.rhs;
+                if (set_clause.is_self_add) {
+                    if (col->type == TYPE_INT) {
+                        int old_val = *reinterpret_cast<int *>(old_rec->data + col->offset);
+                        val.set_int(old_val + set_clause.add_int);
+                    } else if (col->type == TYPE_FLOAT) {
+                        float old_val = *reinterpret_cast<float *>(old_rec->data + col->offset);
+                        float delta = set_clause.add_is_float ? set_clause.add_float : static_cast<float>(set_clause.add_int);
+                        val.set_float(old_val + delta);
+                    }
+                    val.raw = nullptr;
+                }
                 if (col->type == TYPE_FLOAT && val.type == TYPE_INT) {
                     val.set_float(static_cast<float>(val.int_val));
                 }
@@ -107,6 +126,9 @@ class UpdateExecutor : public AbstractExecutor {
         }
 
         for (size_t i = 0; i < rids_.size(); ++i) {
+            if (context_->txn_mgr_ != nullptr) {
+                context_->txn_mgr_->check_ser_write(tab_name_, rids_[i], &old_recs[i], &new_recs[i], context_->txn_);
+            }
             for (auto &index : tab_.indexes) {
                 auto ih = sm_manager_->ihs_.at(sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols)).get();
                 auto key = make_index_key(&old_recs[i], index);
@@ -117,6 +139,9 @@ class UpdateExecutor : public AbstractExecutor {
         for (size_t i = 0; i < rids_.size(); ++i) {
             fh_->update_record(rids_[i], new_recs[i].data, context_);
             if (context_->txn_ != nullptr) {
+                if (context_->txn_mgr_ != nullptr) {
+                    context_->txn_mgr_->append_update_version(tab_name_, rids_[i], old_recs[i], new_recs[i], context_->txn_);
+                }
                 context_->txn_->append_write_record(new WriteRecord(WType::UPDATE_TUPLE, tab_name_, rids_[i], old_recs[i]));
             }
         }

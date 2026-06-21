@@ -59,6 +59,9 @@ class Optimizer {
         } else if (auto x = std::dynamic_pointer_cast<ast::SetStmt>(query->parse)) {
             // Set Knob Plan
             return std::make_shared<SetKnobPlan>(x->set_knob_type_, x->bool_val_);
+        } else if (auto x = std::dynamic_pointer_cast<ast::SetTransactionIsolation>(query->parse)) {
+            return std::make_shared<SetIsolationPlan>(
+                x->serializable ? IsolationLevel::SERIALIZABLE : IsolationLevel::SNAPSHOT_ISOLATION);
         } else {
             return planner_->do_planner(query, context);
         }

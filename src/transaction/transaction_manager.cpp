@@ -73,6 +73,9 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
     if (txn == nullptr) {
         return;
     }
+    if (txn->get_state() == TransactionState::ABORTED || txn->get_state() == TransactionState::COMMITTED) {
+        return;
+    }
     timestamp_t commit_ts = next_timestamp_++;
     {
         std::lock_guard<std::mutex> mvcc_lock(mvcc_latch_);
@@ -107,6 +110,13 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
  */
 void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
     if (txn == nullptr) {
+        return;
+    }
+    if (txn->get_state() == TransactionState::ABORTED) {
+        cleanup_abort(txn);
+        return;
+    }
+    if (txn->get_state() == TransactionState::COMMITTED) {
         return;
     }
     auto write_set = txn->get_write_set();

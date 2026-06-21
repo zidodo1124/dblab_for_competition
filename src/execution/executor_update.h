@@ -82,7 +82,7 @@ class UpdateExecutor : public AbstractExecutor {
             memcpy(new_recs.back().data, old_rec->data, new_recs.back().size);
             for (auto &set_clause : set_clauses_) {
                 auto col = tab_.get_col(set_clause.lhs.col_name);
-                auto &val = set_clause.rhs;
+                Value val = set_clause.rhs;
                 if (set_clause.is_self_add) {
                     if (col->type == TYPE_INT) {
                         int old_val = *reinterpret_cast<int *>(old_rec->data + col->offset);
@@ -96,6 +96,7 @@ class UpdateExecutor : public AbstractExecutor {
                 }
                 if (col->type == TYPE_FLOAT && val.type == TYPE_INT) {
                     val.set_float(static_cast<float>(val.int_val));
+                    val.raw = nullptr;
                 }
                 if (col->type != val.type) {
                     throw IncompatibleTypeError(coltype2str(col->type), coltype2str(val.type));

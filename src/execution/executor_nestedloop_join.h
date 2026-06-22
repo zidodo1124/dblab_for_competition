@@ -26,6 +26,54 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
     std::map<std::string, std::string> tab_display_names_;
     bool isend;
 
+    static bool contains_table(const std::vector<std::string> &tables, const std::string &tab_name) {
+        return std::find(tables.begin(), tables.end(), tab_name) != tables.end();
+    }
+
+    static CompOp reverse_comp_op(CompOp op) {
+        switch (op) {
+            case OP_EQ:
+                return OP_EQ;
+            case OP_NE:
+                return OP_NE;
+            case OP_LT:
+                return OP_GT;
+            case OP_GT:
+                return OP_LT;
+            case OP_LE:
+                return OP_GE;
+            case OP_GE:
+                return OP_LE;
+        }
+        return op;
+    }
+
+    Condition normalize_condition_for_explain(Condition cond) const {
+        if (cond.is_rhs_val) {
+            return cond;
+        }
+
+        auto left_tables = left_->tables();
+        auto right_tables = right_->tables();
+        bool lhs_in_right = contains_table(right_tables, cond.lhs_col.tab_name);
+        bool rhs_in_left = contains_table(left_tables, cond.rhs_col.tab_name);
+        if (lhs_in_right && rhs_in_left) {
+            std::swap(cond.lhs_col, cond.rhs_col);
+            cond.op = reverse_comp_op(cond.op);
+        }
+        return cond;
+    }
+
+    std::vector<std::string> sorted_join_condition_strings_for_explain() const {
+        std::vector<std::string> cond_strs;
+        cond_strs.reserve(fed_conds_.size());
+        for (const auto &cond : fed_conds_) {
+            cond_strs.push_back(format_condition(normalize_condition_for_explain(cond), tab_display_names_));
+        }
+        std::sort(cond_strs.begin(), cond_strs.end());
+        return cond_strs;
+    }
+
     std::unique_ptr<RmRecord> join_current_tuple() {
         auto left_rec = left_->Next();
         auto right_rec = right_->Next();
@@ -120,7 +168,7 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
     }
 
     std::string explain(int depth = 0) const override {
-        auto cond_strs = sorted_condition_strings(fed_conds_, tab_display_names_);
+        auto cond_strs = sorted_join_condition_strings_for_explain();
         std::ostringstream os;
         os << indent(depth) << "Join(tables=[" << join_strings(tables())
            << "], condition=[" << join_strings(cond_strs, false) << "], rows=" << rows_ << ")\n";

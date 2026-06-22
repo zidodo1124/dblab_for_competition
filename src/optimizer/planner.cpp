@@ -427,39 +427,6 @@ bool is_subset(const std::set<std::string> &small, const std::set<std::string> &
     return true;
 }
 
-CompOp reverse_comp_op(CompOp op) {
-    switch (op) {
-        case OP_EQ:
-            return OP_EQ;
-        case OP_NE:
-            return OP_NE;
-        case OP_LT:
-            return OP_GT;
-        case OP_GT:
-            return OP_LT;
-        case OP_LE:
-            return OP_GE;
-        case OP_GE:
-            return OP_LE;
-    }
-    return op;
-}
-
-Condition normalize_join_condition(Condition cond, const std::set<std::string> &left_tables,
-                                   const std::string &right_table) {
-    if (cond.is_rhs_val) {
-        return cond;
-    }
-
-    bool lhs_in_right = cond.lhs_col.tab_name == right_table;
-    bool rhs_in_left = left_tables.find(cond.rhs_col.tab_name) != left_tables.end();
-    if (lhs_in_right && rhs_in_left) {
-        std::swap(cond.lhs_col, cond.rhs_col);
-        cond.op = reverse_comp_op(cond.op);
-    }
-    return cond;
-}
-
 }  // namespace
 
 std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Query> query) {
@@ -522,7 +489,7 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
             }
             auto cond_tabs = condition_tables(join_conds[cond_idx]);
             if (is_subset(cond_tabs, new_joined) && cond_tabs.find(right_table) != cond_tabs.end()) {
-                curr_join_conds.push_back(normalize_join_condition(join_conds[cond_idx], joined, right_table));
+                curr_join_conds.push_back(join_conds[cond_idx]);
                 used_join_cond[cond_idx] = true;
             }
         }

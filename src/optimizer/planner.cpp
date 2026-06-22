@@ -427,45 +427,6 @@ bool is_subset(const std::set<std::string> &small, const std::set<std::string> &
     return true;
 }
 
-bool can_join_now(const std::string &tab_name, const std::set<std::string> &joined,
-                  const std::vector<Condition> &join_conds) {
-    std::set<std::string> new_joined = joined;
-    new_joined.insert(tab_name);
-    for (const auto &cond : join_conds) {
-        auto cond_tabs = condition_tables(cond);
-        if (cond_tabs.find(tab_name) != cond_tabs.end() && is_subset(cond_tabs, new_joined)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-std::vector<std::string> build_explain_join_order(const std::vector<std::string> &tables,
-                                                  const std::vector<Condition> &join_conds) {
-    if (tables.size() <= 2) {
-        return tables;
-    }
-
-    std::vector<std::string> join_order{tables.front()};
-    std::vector<std::string> remaining(tables.begin() + 1, tables.end());
-    std::set<std::string> joined{tables.front()};
-
-    while (!remaining.empty()) {
-        auto next = remaining.begin();
-        for (auto it = remaining.begin(); it != remaining.end(); ++it) {
-            if (can_join_now(*it, joined, join_conds)) {
-                next = it;
-                break;
-            }
-        }
-        joined.insert(*next);
-        join_order.push_back(*next);
-        remaining.erase(next);
-    }
-
-    return join_order;
-}
-
 }  // namespace
 
 std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Query> query) {
@@ -487,9 +448,11 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         for (const auto &col : query->cols) {
             add_col(pushed_cols[col.tab_name], col);
         }
-        for (const auto &cond : join_conds) {
+        for (const auto &cond : query->conds) {
             add_col(pushed_cols[cond.lhs_col.tab_name], cond.lhs_col);
-            add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
+            if (!cond.is_rhs_val) {
+                add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
+            }
         }
         for (auto &entry : pushed_cols) {
             sort_cols_for_display(entry.second, query->tab_display_names);
@@ -501,18 +464,18 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         std::vector<std::string> index_cols;
         std::shared_ptr<Plan> plan =
             std::make_shared<ScanPlan>(T_SeqScan, sm_manager_, tab_name, std::vector<Condition>(), index_cols);
-        if (!local_conds[tab_name].empty()) {
-            plan = std::make_shared<FilterPlan>(T_Filter, std::move(plan), local_conds[tab_name],
-                                                query->tab_display_names);
-        }
         if (push_project && !pushed_cols[tab_name].empty()) {
             plan = std::make_shared<ProjectionPlan>(T_Projection, std::move(plan), pushed_cols[tab_name], false,
                                                     query->tab_display_names);
         }
+        if (!local_conds[tab_name].empty()) {
+            plan = std::make_shared<FilterPlan>(T_Filter, std::move(plan), local_conds[tab_name],
+                                                query->tab_display_names);
+        }
         table_plans[tab_name] = std::move(plan);
     }
 
-    std::vector<std::string> join_order = build_explain_join_order(query->tables, join_conds);
+    std::vector<std::string> join_order = query->tables;
 
     std::shared_ptr<Plan> root = table_plans[join_order[0]];
     std::set<std::string> joined{join_order[0]};

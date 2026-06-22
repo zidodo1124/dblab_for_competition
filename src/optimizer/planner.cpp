@@ -474,60 +474,6 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
     }
 
     std::vector<std::string> join_order = query->tables;
-    if (join_order.size() > 2) {
-        std::map<std::string, size_t> local_rows;
-        for (const auto &tab_name : query->tables) {
-            size_t rows = 0;
-            SeqScanExecutor scan(sm_manager_, tab_name, local_conds[tab_name], nullptr, true);
-            for (scan.beginTuple(); !scan.is_end(); scan.nextTuple()) {
-                rows++;
-            }
-            local_rows[tab_name] = rows;
-        }
-
-        auto better_table = [&](const std::string &lhs, const std::string &rhs) {
-            if (local_rows[lhs] != local_rows[rhs]) {
-                return local_rows[lhs] < local_rows[rhs];
-            }
-            return lhs < rhs;
-        };
-        auto connected_to_joined = [&](const std::string &tab_name, const std::set<std::string> &joined_tabs) {
-            for (const auto &cond : join_conds) {
-                auto cond_tabs = condition_tables(cond);
-                if (cond_tabs.find(tab_name) == cond_tabs.end()) {
-                    continue;
-                }
-                for (const auto &joined_tab : joined_tabs) {
-                    if (cond_tabs.find(joined_tab) != cond_tabs.end()) {
-                        return true;
-                    }
-                }
-            }
-            return false;
-        };
-
-        std::set<std::string> remaining(query->tables.begin(), query->tables.end());
-        auto first = *std::min_element(query->tables.begin(), query->tables.end(), better_table);
-        join_order = {first};
-        remaining.erase(first);
-        std::set<std::string> ordered{first};
-
-        while (!remaining.empty()) {
-            std::vector<std::string> candidates;
-            for (const auto &tab_name : remaining) {
-                if (connected_to_joined(tab_name, ordered)) {
-                    candidates.push_back(tab_name);
-                }
-            }
-            if (candidates.empty()) {
-                candidates.assign(remaining.begin(), remaining.end());
-            }
-            auto next = *std::min_element(candidates.begin(), candidates.end(), better_table);
-            join_order.push_back(next);
-            ordered.insert(next);
-            remaining.erase(next);
-        }
-    }
 
     std::shared_ptr<Plan> root = table_plans[join_order[0]];
     std::set<std::string> joined{join_order[0]};

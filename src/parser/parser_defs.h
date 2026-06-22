@@ -59,13 +59,7 @@ inline bool is_identifier_token(const std::string &token) {
 inline bool is_reserved_from_token(const std::string &token) {
     std::string low = lower_sql(token);
     return low == "join" || low == "on" || low == "where" || low == "order" || low == "by" ||
-           low == "and" || low == "as" || low == "," || low == "inner" || low == "left" ||
-           low == "right" || low == "full" || low == "outer";
-}
-
-inline bool is_join_modifier(const std::string &token) {
-    std::string low = lower_sql(token);
-    return low == "inner" || low == "left" || low == "right" || low == "full" || low == "outer";
+           low == "and" || low == "as" || low == ",";
 }
 
 inline std::vector<std::string> tokenize_sql(const std::string &sql) {
@@ -238,27 +232,6 @@ inline std::optional<NormalizedSelectSql> normalize_select_sql(const std::string
         return true;
     };
 
-    auto starts_next_join = [&](size_t pos) -> bool {
-        if (pos >= from_end) {
-            return false;
-        }
-        std::string low = lower_sql(tokens[pos]);
-        if (low == "join") {
-            return true;
-        }
-        if (low == "inner") {
-            return pos + 1 < from_end && lower_sql(tokens[pos + 1]) == "join";
-        }
-        if (low == "left" || low == "right" || low == "full") {
-            size_t join_pos = pos + 1;
-            if (join_pos < from_end && lower_sql(tokens[join_pos]) == "outer") {
-                ++join_pos;
-            }
-            return join_pos < from_end && lower_sql(tokens[join_pos]) == "join";
-        }
-        return false;
-    };
-
     size_t i = from_pos + 1;
     if (!parse_table_ref(i)) {
         return std::nullopt;
@@ -278,7 +251,7 @@ inline std::optional<NormalizedSelectSql> normalize_select_sql(const std::string
             if (i < from_end && lower_sql(tokens[i]) == "on") {
                 ++i;
                 size_t cond_begin = i;
-                while (i < from_end && tokens[i] != "," && !starts_next_join(i)) {
+                while (i < from_end && lower_sql(tokens[i]) != "join") {
                     ++i;
                 }
                 if (cond_begin < i) {
@@ -286,11 +259,6 @@ inline std::optional<NormalizedSelectSql> normalize_select_sql(const std::string
                     on_conds.push_back(std::move(cond));
                 }
             }
-            if (i < from_end && tokens[i] == ",") {
-                continue;
-            }
-        } else if (is_join_modifier(tokens[i])) {
-            ++i;
         } else {
             ++i;
         }

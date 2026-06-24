@@ -51,6 +51,7 @@ class SeqScanExecutor : public AbstractExecutor {
     }
 
     void beginTuple() override {
+        begin_count_run();
         visible_records_.clear();
         cursor_ = 0;
         if (context_->txn_mgr_ != nullptr) {
@@ -66,12 +67,12 @@ class SeqScanExecutor : public AbstractExecutor {
         }
         while (cursor_ < visible_records_.size()) {
             if (!count_filtered_rows_) {
-                rows_++;
+                count_output_row();
             }
             rid_ = visible_records_[cursor_].first;
             if (eval_conds(cols_, fed_conds_, &visible_records_[cursor_].second)) {
                 if (count_filtered_rows_) {
-                    rows_++;
+                    count_output_row();
                 }
                 return;
             }
@@ -86,12 +87,12 @@ class SeqScanExecutor : public AbstractExecutor {
         cursor_++;
         while (cursor_ < visible_records_.size()) {
             if (!count_filtered_rows_) {
-                rows_++;
+                count_output_row();
             }
             rid_ = visible_records_[cursor_].first;
             if (eval_conds(cols_, fed_conds_, &visible_records_[cursor_].second)) {
                 if (count_filtered_rows_) {
-                    rows_++;
+                    count_output_row();
                 }
                 return;
             }

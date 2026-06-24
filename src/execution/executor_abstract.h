@@ -27,6 +27,8 @@ class AbstractExecutor {
 
     Context *context_;
     size_t rows_ = 0;
+    bool has_counted_rows_ = false;
+    bool count_rows_this_run_ = true;
 
     virtual ~AbstractExecutor() = default;
 
@@ -44,6 +46,17 @@ class AbstractExecutor {
     virtual std::vector<std::string> tables() const { return {}; }
 
     size_t rows() const { return rows_; }
+
+    void begin_count_run() {
+        count_rows_this_run_ = !has_counted_rows_;
+        has_counted_rows_ = true;
+    }
+
+    void count_output_row() {
+        if (count_rows_this_run_) {
+            rows_++;
+        }
+    }
 
     virtual void beginTuple(){};
 

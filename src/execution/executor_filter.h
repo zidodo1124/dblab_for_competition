@@ -22,7 +22,7 @@ class FilterExecutor : public AbstractExecutor {
         while (!prev_->is_end()) {
             auto rec = prev_->Next();
             if (eval_conds(prev_->cols(), conds_, rec.get())) {
-                rows_++;
+                count_output_row();
                 return;
             }
             prev_->nextTuple();
@@ -37,6 +37,7 @@ class FilterExecutor : public AbstractExecutor {
           tab_display_names_(std::move(tab_display_names)) {}
 
     void beginTuple() override {
+        begin_count_run();
         prev_->beginTuple();
         advance_to_match();
     }

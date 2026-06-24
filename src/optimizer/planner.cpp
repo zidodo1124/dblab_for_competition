@@ -488,10 +488,25 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
     }
 
     std::vector<std::string> join_order;
-    if (!query->tables.empty()) {
-        join_order.push_back(query->tables[0]);
-        std::set<std::string> ordered{query->tables[0]};
-        std::vector<std::string> remaining(query->tables.begin() + 1, query->tables.end());
+    if (query->tables.size() <= 2) {
+        join_order = query->tables;
+    } else {
+        auto start = query->tables.begin();
+        for (auto it = query->tables.begin(); it != query->tables.end(); ++it) {
+            if (!local_conds[*it].empty()) {
+                start = it;
+                break;
+            }
+        }
+
+        join_order.push_back(*start);
+        std::set<std::string> ordered{*start};
+        std::vector<std::string> remaining;
+        for (const auto &tab_name : query->tables) {
+            if (tab_name != *start) {
+                remaining.push_back(tab_name);
+            }
+        }
         while (!remaining.empty()) {
             auto chosen = remaining.begin();
             for (auto it = remaining.begin(); it != remaining.end(); ++it) {

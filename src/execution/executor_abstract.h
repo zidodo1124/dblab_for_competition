@@ -73,6 +73,9 @@ class AbstractExecutor {
     }
 
     static std::string format_value(const Value &val) {
+        if (!val.display_val.empty()) {
+            return val.display_val;
+        }
         std::ostringstream os;
         if (val.type == TYPE_INT) {
             os << val.int_val;

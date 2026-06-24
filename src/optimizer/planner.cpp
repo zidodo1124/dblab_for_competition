@@ -11,6 +11,7 @@ See the Mulan PSL v2 for more details. */
 #include "planner.h"
 
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <set>
@@ -441,8 +442,8 @@ bool connects_to_joined(const Condition &cond, const std::set<std::string> &join
     return false;
 }
 
-size_t estimate_filtered_rows(SmManager *sm_manager, const std::string &tab_name,
-                              const std::vector<Condition> &conds, Context *context) {
+size_t estimate_table_rows(SmManager *sm_manager, const std::string &tab_name, Context *context) {
+    std::vector<Condition> conds;
     SeqScanExecutor scan(sm_manager, tab_name, conds, context, true);
     size_t rows = 0;
     for (scan.beginTuple(); !scan.is_end(); scan.nextTuple()) {
@@ -453,14 +454,14 @@ size_t estimate_filtered_rows(SmManager *sm_manager, const std::string &tab_name
 
 std::vector<std::string> build_greedy_join_order(
     const std::vector<std::string> &tables, const std::vector<Condition> &join_conds,
-    const std::map<std::string, size_t> &local_rows) {
+    const std::map<std::string, size_t> &table_rows) {
     if (tables.size() <= 2) {
         return tables;
     }
 
     auto less_table = [&](const std::string &lhs, const std::string &rhs) {
-        auto lhs_rows = local_rows.at(lhs);
-        auto rhs_rows = local_rows.at(rhs);
+        auto lhs_rows = table_rows.at(lhs);
+        auto rhs_rows = table_rows.at(rhs);
         if (lhs_rows != rhs_rows) {
             return lhs_rows < rhs_rows;
         }
@@ -468,10 +469,51 @@ std::vector<std::string> build_greedy_join_order(
     };
 
     std::vector<std::string> remaining = tables;
-    auto first = std::min_element(remaining.begin(), remaining.end(), less_table);
-    std::vector<std::string> join_order{*first};
-    std::set<std::string> joined{*first};
-    remaining.erase(first);
+    auto first = remaining.end();
+    auto second = remaining.end();
+    for (auto lhs = remaining.begin(); lhs != remaining.end(); ++lhs) {
+        for (auto rhs = std::next(lhs); rhs != remaining.end(); ++rhs) {
+            bool connected = false;
+            for (const auto &cond : join_conds) {
+                auto cond_tabs = condition_tables(cond);
+                if (cond_tabs.find(*lhs) != cond_tabs.end() && cond_tabs.find(*rhs) != cond_tabs.end()) {
+                    connected = true;
+                    break;
+                }
+            }
+            if (!connected) {
+                continue;
+            }
+            if (first == remaining.end() ||
+                table_rows.at(*lhs) * table_rows.at(*rhs) < table_rows.at(*first) * table_rows.at(*second) ||
+                (table_rows.at(*lhs) * table_rows.at(*rhs) == table_rows.at(*first) * table_rows.at(*second) &&
+                 std::min(*lhs, *rhs) < std::min(*first, *second))) {
+                first = lhs;
+                second = rhs;
+            }
+        }
+    }
+    if (first == remaining.end()) {
+        first = std::min_element(remaining.begin(), remaining.end(), less_table);
+        second = remaining.end();
+        for (auto it = remaining.begin(); it != remaining.end(); ++it) {
+            if (it != first && (second == remaining.end() || less_table(*it, *second))) {
+                second = it;
+            }
+        }
+    }
+
+    std::vector<std::string> join_order;
+    if (less_table(*second, *first)) {
+        std::swap(first, second);
+    }
+    join_order.push_back(*first);
+    join_order.push_back(*second);
+    std::set<std::string> joined{*first, *second};
+    auto first_name = *first;
+    auto second_name = *second;
+    remaining.erase(std::remove(remaining.begin(), remaining.end(), first_name), remaining.end());
+    remaining.erase(std::remove(remaining.begin(), remaining.end(), second_name), remaining.end());
 
     while (!remaining.empty()) {
         auto chosen = remaining.end();
@@ -547,11 +589,11 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         table_plans[tab_name] = std::move(plan);
     }
 
-    std::map<std::string, size_t> local_rows;
+    std::map<std::string, size_t> table_rows;
     for (const auto &tab_name : query->tables) {
-        local_rows[tab_name] = estimate_filtered_rows(sm_manager_, tab_name, local_conds[tab_name], context);
+        table_rows[tab_name] = estimate_table_rows(sm_manager_, tab_name, context);
     }
-    std::vector<std::string> join_order = build_greedy_join_order(query->tables, join_conds, local_rows);
+    std::vector<std::string> join_order = build_greedy_join_order(query->tables, join_conds, table_rows);
 
     std::shared_ptr<Plan> root = table_plans[join_order[0]];
     std::set<std::string> joined{join_order[0]};

@@ -427,6 +427,20 @@ bool is_subset(const std::set<std::string> &small, const std::set<std::string> &
     return true;
 }
 
+bool connects_to_joined(const Condition &cond, const std::set<std::string> &joined,
+                        const std::string &candidate) {
+    auto tables = condition_tables(cond);
+    if (tables.find(candidate) == tables.end()) {
+        return false;
+    }
+    for (const auto &table : tables) {
+        if (table != candidate && joined.find(table) != joined.end()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Query> query) {
@@ -473,7 +487,31 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         table_plans[tab_name] = std::move(plan);
     }
 
-    std::vector<std::string> join_order = query->tables;
+    std::vector<std::string> join_order;
+    if (!query->tables.empty()) {
+        join_order.push_back(query->tables[0]);
+        std::set<std::string> ordered{query->tables[0]};
+        std::vector<std::string> remaining(query->tables.begin() + 1, query->tables.end());
+        while (!remaining.empty()) {
+            auto chosen = remaining.begin();
+            for (auto it = remaining.begin(); it != remaining.end(); ++it) {
+                bool connected = false;
+                for (const auto &cond : join_conds) {
+                    if (connects_to_joined(cond, ordered, *it)) {
+                        connected = true;
+                        break;
+                    }
+                }
+                if (connected) {
+                    chosen = it;
+                    break;
+                }
+            }
+            ordered.insert(*chosen);
+            join_order.push_back(*chosen);
+            remaining.erase(chosen);
+        }
+    }
 
     std::shared_ptr<Plan> root = table_plans[join_order[0]];
     std::set<std::string> joined{join_order[0]};

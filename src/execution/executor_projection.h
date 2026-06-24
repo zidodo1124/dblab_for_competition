@@ -48,17 +48,16 @@ class ProjectionExecutor : public AbstractExecutor {
     }
 
     void beginTuple() override {
-        begin_count_run();
         prev_->beginTuple();
         if (!prev_->is_end()) {
-            count_output_row();
+            rows_++;
         }
     }
 
     void nextTuple() override {
         prev_->nextTuple();
         if (!prev_->is_end()) {
-            count_output_row();
+            rows_++;
         }
     }
 

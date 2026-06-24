@@ -41,7 +41,7 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
                 auto rec = join_current_tuple();
                 if (eval_conds(cols_, fed_conds_, rec.get())) {
                     isend = false;
-                    count_output_row();
+                    rows_++;
                     return;
                 }
                 right_->nextTuple();
@@ -75,7 +75,6 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
     }
 
     void beginTuple() override {
-        begin_count_run();
         left_->beginTuple();
         if (left_->is_end()) {
             isend = true;

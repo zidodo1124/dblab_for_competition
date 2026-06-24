@@ -559,7 +559,11 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         }
     }
 
-    return std::make_shared<ProjectionPlan>(T_Projection, std::move(root), query->cols, query->select_all,
+    auto root_cols = query->cols;
+    if (!query->select_all) {
+        sort_cols_for_display(root_cols, query->tab_display_names);
+    }
+    return std::make_shared<ProjectionPlan>(T_Projection, std::move(root), root_cols, query->select_all,
                                             query->tab_display_names);
 }
 

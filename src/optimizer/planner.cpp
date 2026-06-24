@@ -441,9 +441,69 @@ bool connects_to_joined(const Condition &cond, const std::set<std::string> &join
     return false;
 }
 
+size_t estimate_filtered_rows(SmManager *sm_manager, const std::string &tab_name,
+                              const std::vector<Condition> &conds, Context *context) {
+    SeqScanExecutor scan(sm_manager, tab_name, conds, context, true);
+    size_t rows = 0;
+    for (scan.beginTuple(); !scan.is_end(); scan.nextTuple()) {
+        ++rows;
+    }
+    return rows;
+}
+
+std::vector<std::string> build_greedy_join_order(
+    const std::vector<std::string> &tables, const std::vector<Condition> &join_conds,
+    const std::map<std::string, size_t> &local_rows) {
+    if (tables.size() <= 2) {
+        return tables;
+    }
+
+    auto less_table = [&](const std::string &lhs, const std::string &rhs) {
+        auto lhs_rows = local_rows.at(lhs);
+        auto rhs_rows = local_rows.at(rhs);
+        if (lhs_rows != rhs_rows) {
+            return lhs_rows < rhs_rows;
+        }
+        return lhs < rhs;
+    };
+
+    std::vector<std::string> remaining = tables;
+    auto first = std::min_element(remaining.begin(), remaining.end(), less_table);
+    std::vector<std::string> join_order{*first};
+    std::set<std::string> joined{*first};
+    remaining.erase(first);
+
+    while (!remaining.empty()) {
+        auto chosen = remaining.end();
+        for (auto it = remaining.begin(); it != remaining.end(); ++it) {
+            bool connected = false;
+            for (const auto &cond : join_conds) {
+                if (connects_to_joined(cond, joined, *it)) {
+                    connected = true;
+                    break;
+                }
+            }
+            if (!connected) {
+                continue;
+            }
+            if (chosen == remaining.end() || less_table(*it, *chosen)) {
+                chosen = it;
+            }
+        }
+        if (chosen == remaining.end()) {
+            chosen = std::min_element(remaining.begin(), remaining.end(), less_table);
+        }
+        joined.insert(*chosen);
+        join_order.push_back(*chosen);
+        remaining.erase(chosen);
+    }
+
+    return join_order;
+}
+
 }  // namespace
 
-std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Query> query) {
+std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Query> query, Context *context) {
     std::map<std::string, std::vector<Condition>> local_conds;
     std::vector<Condition> join_conds;
 
@@ -487,46 +547,11 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         table_plans[tab_name] = std::move(plan);
     }
 
-    std::vector<std::string> join_order;
-    if (query->tables.size() <= 2) {
-        join_order = query->tables;
-    } else {
-        auto start = query->tables.begin();
-        for (auto it = query->tables.begin(); it != query->tables.end(); ++it) {
-            if (!local_conds[*it].empty()) {
-                start = it;
-                break;
-            }
-        }
-
-        join_order.push_back(*start);
-        std::set<std::string> ordered{*start};
-        std::vector<std::string> remaining;
-        for (const auto &tab_name : query->tables) {
-            if (tab_name != *start) {
-                remaining.push_back(tab_name);
-            }
-        }
-        while (!remaining.empty()) {
-            auto chosen = remaining.begin();
-            for (auto it = remaining.begin(); it != remaining.end(); ++it) {
-                bool connected = false;
-                for (const auto &cond : join_conds) {
-                    if (connects_to_joined(cond, ordered, *it)) {
-                        connected = true;
-                        break;
-                    }
-                }
-                if (connected) {
-                    chosen = it;
-                    break;
-                }
-            }
-            ordered.insert(*chosen);
-            join_order.push_back(*chosen);
-            remaining.erase(chosen);
-        }
+    std::map<std::string, size_t> local_rows;
+    for (const auto &tab_name : query->tables) {
+        local_rows[tab_name] = estimate_filtered_rows(sm_manager_, tab_name, local_conds[tab_name], context);
     }
+    std::vector<std::string> join_order = build_greedy_join_order(query->tables, join_conds, local_rows);
 
     std::shared_ptr<Plan> root = table_plans[join_order[0]];
     std::set<std::string> joined{join_order[0]};
@@ -643,7 +668,7 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
         std::shared_ptr<plannerInfo> root = std::make_shared<plannerInfo>(x);
         // 生成select语句的查询执行计划
         if (query->is_explain_analyze) {
-            std::shared_ptr<Plan> projection = generate_explain_analyze_plan(std::move(query));
+            std::shared_ptr<Plan> projection = generate_explain_analyze_plan(std::move(query), context);
             plannerRoot = std::make_shared<DMLPlan>(T_ExplainAnalyze, projection, std::string(), std::vector<Value>(),
                                                     std::vector<Condition>(), std::vector<SetClause>());
         } else {

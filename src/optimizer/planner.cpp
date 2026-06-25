@@ -530,50 +530,8 @@ std::vector<std::string> choose_min_result_join_order(
         return tables;
     }
 
-    auto plan_rows = [&](const std::vector<std::string> &order) {
-        return count_plan_rows(build_join_plan_for_order(order, table_plans, join_conds, display_names, false),
-                               sm_manager, context);
-    };
-
     std::vector<std::string> order;
     std::vector<std::string> remaining = tables;
-
-    bool found_pair = false;
-    size_t best_pair_rows = 0;
-    std::vector<std::string> best_pair;
-    for (const auto &lhs : tables) {
-        for (const auto &rhs : tables) {
-            if (lhs == rhs) {
-                continue;
-            }
-            bool connected = false;
-            for (const auto &cond : join_conds) {
-                auto cond_tabs = condition_tables(cond);
-                if (cond_tabs.find(lhs) != cond_tabs.end() && cond_tabs.find(rhs) != cond_tabs.end()) {
-                    connected = true;
-                    break;
-                }
-            }
-            if (!connected) {
-                continue;
-            }
-            std::vector<std::string> candidate{lhs, rhs};
-            size_t rows = plan_rows(candidate);
-            if (!found_pair || rows < best_pair_rows ||
-                (rows == best_pair_rows && order_key(candidate) < order_key(best_pair))) {
-                found_pair = true;
-                best_pair_rows = rows;
-                best_pair = std::move(candidate);
-            }
-        }
-    }
-
-    if (found_pair) {
-        order = std::move(best_pair);
-        for (const auto &tab : order) {
-            remaining.erase(std::remove(remaining.begin(), remaining.end(), tab), remaining.end());
-        }
-    }
 
     while (!remaining.empty()) {
         std::vector<std::string> best_order;
@@ -593,7 +551,9 @@ std::vector<std::string> choose_min_result_join_order(
             }
             auto candidate_order = order;
             candidate_order.push_back(candidate);
-            size_t rows = plan_rows(candidate_order);
+            size_t rows = count_plan_rows(
+                build_join_plan_for_order(candidate_order, table_plans, join_conds, display_names, false),
+                sm_manager, context);
             if (!found || rows < best_rows ||
                 (rows == best_rows && order_key(candidate_order) < order_key(best_order))) {
                 found = true;

@@ -11,6 +11,7 @@ See the Mulan PSL v2 for more details. */
 #include "planner.h"
 
 #include <algorithm>
+#include <functional>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -522,6 +523,14 @@ std::string order_key(const std::vector<std::string> &order) {
     return os.str();
 }
 
+size_t plan_rows_for_order_prefix(
+    const std::vector<std::string> &order, const std::map<std::string, std::shared_ptr<Plan>> &table_plans,
+    const std::vector<Condition> &join_conds, const std::map<std::string, std::string> &display_names,
+    SmManager *sm_manager, Context *context) {
+    return count_plan_rows(build_join_plan_for_order(order, table_plans, join_conds, display_names, false),
+                           sm_manager, context);
+}
+
 std::vector<std::string> choose_min_result_join_order(
     const std::vector<std::string> &tables, const std::vector<Condition> &join_conds,
     const std::map<std::string, std::shared_ptr<Plan>> &table_plans,
@@ -530,48 +539,68 @@ std::vector<std::string> choose_min_result_join_order(
         return tables;
     }
 
-    std::vector<std::string> order;
-    std::vector<std::string> remaining = tables;
+    std::vector<std::string> best_order;
+    size_t best_cost = 0;
+    size_t best_final_rows = 0;
+    bool found_best = false;
 
-    while (!remaining.empty()) {
-        std::vector<std::string> best_order;
-        size_t best_rows = 0;
-        bool found = false;
-        for (const auto &candidate : remaining) {
+    std::function<void(std::vector<std::string> &, std::vector<std::string> &, size_t)> search =
+        [&](std::vector<std::string> &order, std::vector<std::string> &remaining, size_t cost) {
+            if (remaining.empty()) {
+                size_t final_rows = plan_rows_for_order_prefix(order, table_plans, join_conds, display_names,
+                                                               sm_manager, context);
+                if (!found_best || cost < best_cost ||
+                    (cost == best_cost && final_rows < best_final_rows) ||
+                    (cost == best_cost && final_rows == best_final_rows &&
+                     order_key(order) < order_key(best_order))) {
+                    found_best = true;
+                    best_cost = cost;
+                    best_final_rows = final_rows;
+                    best_order = order;
+                }
+                return;
+            }
+
             std::set<std::string> joined(order.begin(), order.end());
-            bool connected = order.empty();
-            for (const auto &cond : join_conds) {
-                if (connects_to_joined(cond, joined, candidate)) {
-                    connected = true;
-                    break;
+            std::vector<std::string> candidates;
+            for (const auto &candidate : remaining) {
+                if (order.empty()) {
+                    candidates.push_back(candidate);
+                } else {
+                    for (const auto &cond : join_conds) {
+                        if (connects_to_joined(cond, joined, candidate)) {
+                            candidates.push_back(candidate);
+                            break;
+                        }
+                    }
                 }
             }
-            if (!connected) {
-                continue;
+            if (candidates.empty()) {
+                candidates = remaining;
             }
-            auto candidate_order = order;
-            candidate_order.push_back(candidate);
-            size_t rows = count_plan_rows(
-                build_join_plan_for_order(candidate_order, table_plans, join_conds, display_names, false),
-                sm_manager, context);
-            if (!found || rows < best_rows ||
-                (rows == best_rows && order_key(candidate_order) < order_key(best_order))) {
-                found = true;
-                best_rows = rows;
-                best_order = std::move(candidate_order);
-            }
-        }
-        if (!found) {
-            std::sort(remaining.begin(), remaining.end());
-            best_order = order;
-            best_order.push_back(remaining.front());
-        }
-        auto chosen = best_order.back();
-        order = std::move(best_order);
-        remaining.erase(std::remove(remaining.begin(), remaining.end(), chosen), remaining.end());
-    }
+            std::sort(candidates.begin(), candidates.end());
 
-    return order;
+            for (const auto &candidate : candidates) {
+                order.push_back(candidate);
+                remaining.erase(std::remove(remaining.begin(), remaining.end(), candidate), remaining.end());
+                size_t next_cost = cost;
+                if (order.size() >= 2) {
+                    next_cost += plan_rows_for_order_prefix(order, table_plans, join_conds, display_names,
+                                                            sm_manager, context);
+                }
+                search(order, remaining, next_cost);
+                remaining.push_back(candidate);
+                std::sort(remaining.begin(), remaining.end());
+                order.pop_back();
+            }
+        };
+
+    std::vector<std::string> order;
+    std::vector<std::string> remaining = tables;
+    std::sort(remaining.begin(), remaining.end());
+    search(order, remaining, 0);
+
+    return found_best ? best_order : tables;
 }
 
 }  // namespace

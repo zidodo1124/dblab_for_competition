@@ -63,13 +63,18 @@ public:
 class ScanPlan : public Plan
 {
     public:
-        ScanPlan(PlanTag tag, SmManager *sm_manager, std::string tab_name, std::vector<Condition> conds, std::vector<std::string> index_col_names)
+        ScanPlan(PlanTag tag, SmManager *sm_manager, std::string tab_name, std::vector<Condition> conds,
+                 std::vector<std::string> index_col_names, std::string logical_tab_name = "")
         {
             Plan::tag = tag;
             tab_name_ = std::move(tab_name);
+            logical_tab_name_ = logical_tab_name.empty() ? tab_name_ : std::move(logical_tab_name);
             conds_ = std::move(conds);
             TabMeta &tab = sm_manager->db_.get_table(tab_name_);
             cols_ = tab.cols;
+            for (auto &col : cols_) {
+                col.tab_name = logical_tab_name_;
+            }
             len_ = cols_.back().offset + cols_.back().len;
             fed_conds_ = conds_;
             index_col_names_ = index_col_names;
@@ -77,8 +82,9 @@ class ScanPlan : public Plan
         }
         ~ScanPlan(){}
         // 以下变量同ScanExecutor中的变量
-        std::string tab_name_;                     
-        std::vector<ColMeta> cols_;                
+        std::string tab_name_;
+        std::string logical_tab_name_;
+        std::vector<ColMeta> cols_;
         std::vector<Condition> conds_;             
         size_t len_;                               
         std::vector<Condition> fed_conds_;

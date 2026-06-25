@@ -28,9 +28,13 @@ See the Mulan PSL v2 for more details. */
 #include "index/ix.h"
 #include "record_printer.h"
 
-bool Planner::get_index_cols(std::string tab_name, std::vector<Condition> curr_conds, std::vector<std::string>& index_col_names) {
+bool Planner::get_index_cols(std::string tab_name, std::vector<Condition> curr_conds,
+                             std::vector<std::string>& index_col_names, std::string logical_tab_name) {
     index_col_names.clear();
     TabMeta& tab = sm_manager_->db_.get_table(tab_name);
+    if (logical_tab_name.empty()) {
+        logical_tab_name = tab_name;
+    }
 
     std::map<CompOp, CompOp> swap_op = {
         {OP_EQ, OP_EQ}, {OP_NE, OP_NE}, {OP_LT, OP_GT}, {OP_GT, OP_LT}, {OP_LE, OP_GE}, {OP_GE, OP_LE},
@@ -41,9 +45,9 @@ bool Planner::get_index_cols(std::string tab_name, std::vector<Condition> curr_c
         if (!cond.is_rhs_val) {
             continue;
         }
-        if (cond.lhs_col.tab_name == tab_name) {
+        if (cond.lhs_col.tab_name == logical_tab_name) {
             normalized.push_back(cond);
-        } else if (cond.rhs_col.tab_name == tab_name) {
+        } else if (cond.rhs_col.tab_name == logical_tab_name) {
             std::swap(cond.lhs_col, cond.rhs_col);
             cond.op = swap_op.at(cond.op);
             normalized.push_back(cond);
@@ -125,9 +129,9 @@ int push_conds(Condition *cond, std::shared_ptr<Plan> plan)
 {
     if(auto x = std::dynamic_pointer_cast<ScanPlan>(plan))
     {
-        if(x->tab_name_.compare(cond->lhs_col.tab_name) == 0) {
+        if(x->logical_tab_name_.compare(cond->lhs_col.tab_name) == 0) {
             return 1;
-        } else if(x->tab_name_.compare(cond->rhs_col.tab_name) == 0){
+        } else if(x->logical_tab_name_.compare(cond->rhs_col.tab_name) == 0){
             return 2;
         } else {
             return 0;
@@ -169,10 +173,10 @@ std::shared_ptr<Plan> pop_scan(int *scantbl, std::string table, std::vector<std:
 {
     for (size_t i = 0; i < plans.size(); i++) {
         auto x = std::dynamic_pointer_cast<ScanPlan>(plans[i]);
-        if(x->tab_name_.compare(table) == 0)
+        if(x->logical_tab_name_.compare(table) == 0)
         {
             scantbl[i] = 1;
-            joined_tables.emplace_back(x->tab_name_);
+            joined_tables.emplace_back(x->logical_tab_name_);
             return plans[i];
         }
     }
@@ -212,14 +216,16 @@ std::shared_ptr<Plan> Planner::make_one_rel(std::shared_ptr<Query> query)
         auto curr_conds = pop_conds(query->conds, tables[i]);
         // int index_no = get_indexNo(tables[i], curr_conds);
         std::vector<std::string> index_col_names;
-        bool index_exist = get_index_cols(tables[i], curr_conds, index_col_names);
+        std::string real_table = query->table_real_names.count(tables[i]) ? query->table_real_names.at(tables[i])
+                                                                          : tables[i];
+        bool index_exist = get_index_cols(real_table, curr_conds, index_col_names, tables[i]);
         if (index_exist == false) {  // 该表没有索引
             index_col_names.clear();
-            table_scan_executors[i] = 
-                std::make_shared<ScanPlan>(T_SeqScan, sm_manager_, tables[i], curr_conds, index_col_names);
+            table_scan_executors[i] =
+                std::make_shared<ScanPlan>(T_SeqScan, sm_manager_, real_table, curr_conds, index_col_names, tables[i]);
         } else {  // 存在索引
             table_scan_executors[i] =
-                std::make_shared<ScanPlan>(T_IndexScan, sm_manager_, tables[i], curr_conds, index_col_names);
+                std::make_shared<ScanPlan>(T_IndexScan, sm_manager_, real_table, curr_conds, index_col_names, tables[i]);
         }
     }
     // 只有一个表，不需要join。
@@ -335,8 +341,13 @@ std::shared_ptr<Plan> Planner::generate_sort_plan(std::shared_ptr<Query> query, 
     std::vector<ColMeta> all_cols;
     for (auto &sel_tab_name : tables) {
         // 这里db_不能写成get_db(), 注意要传指针
-        const auto &sel_tab_cols = sm_manager_->db_.get_table(sel_tab_name).cols;
-        all_cols.insert(all_cols.end(), sel_tab_cols.begin(), sel_tab_cols.end());
+        std::string real_table = query->table_real_names.count(sel_tab_name) ? query->table_real_names.at(sel_tab_name)
+                                                                             : sel_tab_name;
+        auto sel_tab_cols = sm_manager_->db_.get_table(real_table).cols;
+        for (auto &col : sel_tab_cols) {
+            col.tab_name = sel_tab_name;
+            all_cols.push_back(col);
+        }
     }
     TabCol order_col = {.tab_name = x->order->cols->tab_name, .col_name = x->order->cols->col_name};
     TabCol sel_col;
@@ -494,7 +505,8 @@ std::unique_ptr<AbstractExecutor> make_count_executor(std::shared_ptr<Plan> plan
                                                 x->conds_, x->tab_display_names_);
     }
     if (auto x = std::dynamic_pointer_cast<ScanPlan>(plan)) {
-        return std::make_unique<SeqScanExecutor>(sm_manager, x->tab_name_, x->conds_, context);
+        return std::make_unique<SeqScanExecutor>(sm_manager, x->tab_name_, x->conds_, context, false,
+                                                 x->logical_tab_name_);
     }
     if (auto x = std::dynamic_pointer_cast<JoinPlan>(plan)) {
         return std::make_unique<NestedLoopJoinExecutor>(make_count_executor(x->left_, sm_manager, context),
@@ -636,8 +648,11 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
     std::map<std::string, std::shared_ptr<Plan>> table_plans;
     for (const auto &tab_name : query->tables) {
         std::vector<std::string> index_cols;
+        std::string real_table = query->table_real_names.count(tab_name) ? query->table_real_names.at(tab_name)
+                                                                         : tab_name;
         std::shared_ptr<Plan> plan =
-            std::make_shared<ScanPlan>(T_SeqScan, sm_manager_, tab_name, std::vector<Condition>(), index_cols);
+            std::make_shared<ScanPlan>(T_SeqScan, sm_manager_, real_table, std::vector<Condition>(), index_cols,
+                                       tab_name);
         if (!local_conds[tab_name].empty()) {
             plan = std::make_shared<FilterPlan>(T_Filter, std::move(plan), local_conds[tab_name],
                                                 query->tab_display_names);

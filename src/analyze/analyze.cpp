@@ -27,8 +27,12 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
         query->is_explain_analyze = x->is_explain_analyze;
         query->select_all = x->select_all;
         query->tab_display_names = x->tab_display_names;
+        query->table_real_names = x->tab_real_names;
         for (const auto &tab_name : query->tables) {
-            sm_manager_->db_.get_table(tab_name);
+            if (query->table_real_names.find(tab_name) == query->table_real_names.end()) {
+                query->table_real_names[tab_name] = tab_name;
+            }
+            sm_manager_->db_.get_table(query->table_real_names.at(tab_name));
             if (query->tab_display_names.find(tab_name) == query->tab_display_names.end()) {
                 query->tab_display_names[tab_name] = tab_name;
             }
@@ -166,8 +170,13 @@ TabCol Analyze::check_column(const std::vector<ColMeta> &all_cols, TabCol target
 void Analyze::get_all_cols(const std::vector<std::string> &tab_names, std::vector<ColMeta> &all_cols) {
     for (auto &sel_tab_name : tab_names) {
         // 这里db_不能写成get_db(), 注意要传指针
-        const auto &sel_tab_cols = sm_manager_->db_.get_table(sel_tab_name).cols;
-        all_cols.insert(all_cols.end(), sel_tab_cols.begin(), sel_tab_cols.end());
+        auto real_it = ast::pending_tab_real_names.find(sel_tab_name);
+        const auto &real_name = real_it == ast::pending_tab_real_names.end() ? sel_tab_name : real_it->second;
+        auto sel_tab_cols = sm_manager_->db_.get_table(real_name).cols;
+        for (auto &col : sel_tab_cols) {
+            col.tab_name = sel_tab_name;
+            all_cols.push_back(col);
+        }
     }
 }
 
@@ -199,7 +208,10 @@ void Analyze::check_clause(const std::vector<std::string> &tab_names, std::vecto
         if (!cond.is_rhs_val) {
             cond.rhs_col = check_column(all_cols, cond.rhs_col);
         }
-        TabMeta &lhs_tab = sm_manager_->db_.get_table(cond.lhs_col.tab_name);
+        auto lhs_real_it = ast::pending_tab_real_names.find(cond.lhs_col.tab_name);
+        const auto &lhs_real_tab_name =
+            lhs_real_it == ast::pending_tab_real_names.end() ? cond.lhs_col.tab_name : lhs_real_it->second;
+        TabMeta &lhs_tab = sm_manager_->db_.get_table(lhs_real_tab_name);
         auto lhs_col = lhs_tab.get_col(cond.lhs_col.col_name);
         ColType lhs_type = lhs_col->type;
         ColType rhs_type;
@@ -210,7 +222,10 @@ void Analyze::check_clause(const std::vector<std::string> &tab_names, std::vecto
             cond.rhs_val.init_raw(lhs_col->len);
             rhs_type = cond.rhs_val.type;
         } else {
-            TabMeta &rhs_tab = sm_manager_->db_.get_table(cond.rhs_col.tab_name);
+            auto rhs_real_it = ast::pending_tab_real_names.find(cond.rhs_col.tab_name);
+            const auto &rhs_real_tab_name =
+                rhs_real_it == ast::pending_tab_real_names.end() ? cond.rhs_col.tab_name : rhs_real_it->second;
+            TabMeta &rhs_tab = sm_manager_->db_.get_table(rhs_real_tab_name);
             auto rhs_col = rhs_tab.get_col(cond.rhs_col.col_name);
             rhs_type = rhs_col->type;
         }

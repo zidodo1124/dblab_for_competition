@@ -25,6 +25,7 @@ See the Mulan PSL v2 for more details. */
 class IndexScanExecutor : public AbstractExecutor {
    private:
     std::string tab_name_;
+    std::string logical_tab_name_;
     TabMeta tab_;
     std::vector<Condition> conds_;
     RmFileHandle *fh_;
@@ -87,7 +88,7 @@ class IndexScanExecutor : public AbstractExecutor {
             if (!cond.is_rhs_val) {
                 continue;
             }
-            if (cond.lhs_col.tab_name == tab_name_) {
+            if (cond.lhs_col.tab_name == logical_tab_name_) {
                 normalized.push_back(cond);
             }
         }
@@ -182,10 +183,12 @@ class IndexScanExecutor : public AbstractExecutor {
 
    public:
     IndexScanExecutor(SmManager *sm_manager, std::string tab_name, std::vector<Condition> conds,
-                      std::vector<std::string> index_col_names, Context *context) {
+                      std::vector<std::string> index_col_names, Context *context,
+                      std::string logical_tab_name = "") {
         sm_manager_ = sm_manager;
         context_ = context;
         tab_name_ = std::move(tab_name);
+        logical_tab_name_ = logical_tab_name.empty() ? tab_name_ : std::move(logical_tab_name);
         tab_ = sm_manager_->db_.get_table(tab_name_);
         conds_ = std::move(conds);
         index_col_names_ = std::move(index_col_names);
@@ -193,6 +196,9 @@ class IndexScanExecutor : public AbstractExecutor {
         fh_ = sm_manager_->fhs_.at(tab_name_).get();
         ih_ = sm_manager_->ihs_.at(sm_manager_->get_ix_manager()->get_index_name(tab_name_, index_meta_.cols)).get();
         cols_ = tab_.cols;
+        for (auto &col : cols_) {
+            col.tab_name = logical_tab_name_;
+        }
         len_ = cols_.back().offset + cols_.back().len;
         fed_conds_ = conds_;
     }

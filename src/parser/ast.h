@@ -229,6 +229,7 @@ struct JoinExpr : public TreeNode {
 
 extern bool pending_is_explain_analyze;
 extern std::map<std::string, std::string> pending_tab_display_names;
+extern std::map<std::string, std::string> pending_tab_real_names;
 
 struct SelectStmt : public TreeNode {
     std::vector<std::shared_ptr<Col>> cols;
@@ -238,6 +239,7 @@ struct SelectStmt : public TreeNode {
     bool is_explain_analyze = false;
     bool select_all = false;
     std::map<std::string, std::string> tab_display_names;
+    std::map<std::string, std::string> tab_real_names;
 
 
     bool has_sort;
@@ -254,6 +256,7 @@ struct SelectStmt : public TreeNode {
                 select_all = cols.empty();
                 is_explain_analyze = pending_is_explain_analyze;
                 tab_display_names = pending_tab_display_names;
+                tab_real_names = pending_tab_real_names;
             }
 };
 

@@ -31,6 +31,7 @@ class Query{
     std::vector<TabCol> cols;
     // 表名
     std::vector<std::string> tables;
+    std::map<std::string, std::string> table_real_names;
     bool is_explain_analyze = false;
     bool select_all = false;
     std::map<std::string, std::string> tab_display_names;

@@ -461,7 +461,7 @@ std::unique_ptr<AbstractExecutor> make_count_executor(std::shared_ptr<Plan> plan
     }
     if (auto x = std::dynamic_pointer_cast<ScanPlan>(plan)) {
         return std::make_unique<SeqScanExecutor>(sm_manager, x->tab_name_, x->conds_, context, false,
-                                                 x->logical_tab_name_);
+                                                 x->logical_tab_name_, x->table_output_name_);
     }
     if (auto x = std::dynamic_pointer_cast<JoinPlan>(plan)) {
         return std::make_unique<NestedLoopJoinExecutor>(make_count_executor(x->left_, sm_manager, context),
@@ -575,6 +575,13 @@ std::vector<std::string> choose_min_result_join_order(
 std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Query> query, Context *context) {
     std::map<std::string, std::vector<Condition>> local_conds;
     std::vector<Condition> join_conds;
+    std::map<std::string, int> real_table_counts;
+
+    for (const auto &tab_name : query->tables) {
+        std::string real_table = query->table_real_names.count(tab_name) ? query->table_real_names.at(tab_name)
+                                                                         : tab_name;
+        real_table_counts[real_table]++;
+    }
 
     for (const auto &cond : query->conds) {
         auto tables = condition_tables(cond);
@@ -605,9 +612,10 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         std::vector<std::string> index_cols;
         std::string real_table = query->table_real_names.count(tab_name) ? query->table_real_names.at(tab_name)
                                                                          : tab_name;
+        std::string table_output_name = real_table_counts[real_table] > 1 ? tab_name : real_table;
         std::shared_ptr<Plan> plan =
             std::make_shared<ScanPlan>(T_SeqScan, sm_manager_, real_table, std::vector<Condition>(), index_cols,
-                                       tab_name);
+                                       tab_name, table_output_name);
         if (!local_conds[tab_name].empty()) {
             plan = std::make_shared<FilterPlan>(T_Filter, std::move(plan), local_conds[tab_name],
                                                 query->tab_display_names);

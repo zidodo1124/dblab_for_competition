@@ -33,6 +33,14 @@ enum OrderByDir {
     OrderBy_DESC
 };
 
+enum AggType {
+    AGG_COUNT,
+    AGG_MAX,
+    AGG_MIN,
+    AGG_SUM,
+    AGG_AVG
+};
+
 enum SetKnobType {
     EnableNestLoop, EnableSortMerge
 };
@@ -158,6 +166,28 @@ struct Col : public Expr {
             tab_name(std::move(tab_name_)), col_name(std::move(col_name_)) {}
 };
 
+struct AggFunc : public Expr {
+    AggType type;
+    std::shared_ptr<Col> col;
+    bool is_star;
+
+    AggFunc(AggType type_, std::shared_ptr<Col> col_, bool is_star_) :
+            type(type_), col(std::move(col_)), is_star(is_star_) {}
+};
+
+struct SelectItem : public TreeNode {
+    bool is_agg;
+    std::shared_ptr<Col> col;
+    std::shared_ptr<AggFunc> agg;
+    std::string alias;
+
+    SelectItem(std::shared_ptr<Col> col_, std::string alias_) :
+            is_agg(false), col(std::move(col_)), alias(std::move(alias_)) {}
+
+    SelectItem(std::shared_ptr<AggFunc> agg_, std::string alias_) :
+            is_agg(true), agg(std::move(agg_)), alias(std::move(alias_)) {}
+};
+
 struct SetClause : public TreeNode {
     std::string col_name;
     std::shared_ptr<Value> val;
@@ -178,6 +208,15 @@ struct BinaryExpr : public TreeNode {
     std::shared_ptr<Expr> rhs;
 
     BinaryExpr(std::shared_ptr<Col> lhs_, SvCompOp op_, std::shared_ptr<Expr> rhs_) :
+            lhs(std::move(lhs_)), op(op_), rhs(std::move(rhs_)) {}
+};
+
+struct HavingExpr : public TreeNode {
+    std::shared_ptr<Expr> lhs;
+    SvCompOp op;
+    std::shared_ptr<Expr> rhs;
+
+    HavingExpr(std::shared_ptr<Expr> lhs_, SvCompOp op_, std::shared_ptr<Expr> rhs_) :
             lhs(std::move(lhs_)), op(op_), rhs(std::move(rhs_)) {}
 };
 
@@ -233,27 +272,47 @@ extern std::map<std::string, std::string> pending_tab_real_names;
 
 struct SelectStmt : public TreeNode {
     std::vector<std::shared_ptr<Col>> cols;
+    std::vector<std::shared_ptr<SelectItem>> select_items;
     std::vector<std::string> tabs;
     std::vector<std::shared_ptr<BinaryExpr>> conds;
+    std::vector<std::shared_ptr<Col>> group_cols;
+    std::vector<std::shared_ptr<HavingExpr>> having_conds;
     std::vector<std::shared_ptr<JoinExpr>> jointree;
     bool is_explain_analyze = false;
     bool select_all = false;
+    bool has_agg = false;
     std::map<std::string, std::string> tab_display_names;
     std::map<std::string, std::string> tab_real_names;
 
 
     bool has_sort;
     std::shared_ptr<OrderBy> order;
+    std::vector<std::shared_ptr<OrderBy>> order_items;
+    bool has_limit = false;
+    int limit = 0;
 
 
-    SelectStmt(std::vector<std::shared_ptr<Col>> cols_,
+    SelectStmt(std::vector<std::shared_ptr<SelectItem>> select_items_,
                std::vector<std::string> tabs_,
                std::vector<std::shared_ptr<BinaryExpr>> conds_,
-               std::shared_ptr<OrderBy> order_) :
-            cols(std::move(cols_)), tabs(std::move(tabs_)), conds(std::move(conds_)),
-            order(std::move(order_)) {
-                has_sort = (bool)order;
-                select_all = cols.empty();
+               std::vector<std::shared_ptr<Col>> group_cols_,
+               std::vector<std::shared_ptr<HavingExpr>> having_conds_,
+               std::vector<std::shared_ptr<OrderBy>> order_items_,
+               bool has_limit_,
+               int limit_) :
+            select_items(std::move(select_items_)), tabs(std::move(tabs_)), conds(std::move(conds_)),
+            group_cols(std::move(group_cols_)), having_conds(std::move(having_conds_)),
+            order_items(std::move(order_items_)), has_limit(has_limit_), limit(limit_) {
+                select_all = select_items.empty();
+                for (auto &item : select_items) {
+                    if (item->is_agg) {
+                        has_agg = true;
+                    } else {
+                        cols.push_back(item->col);
+                    }
+                }
+                has_sort = !order_items.empty();
+                order = has_sort ? order_items.front() : nullptr;
                 is_explain_analyze = pending_is_explain_analyze;
                 tab_display_names = pending_tab_display_names;
                 tab_real_names = pending_tab_real_names;
@@ -300,6 +359,12 @@ struct SemValue {
 
     std::shared_ptr<Col> sv_col;
     std::vector<std::shared_ptr<Col>> sv_cols;
+    AggType sv_agg_type;
+    std::shared_ptr<AggFunc> sv_agg_func;
+    std::shared_ptr<SelectItem> sv_select_item;
+    std::vector<std::shared_ptr<SelectItem>> sv_select_items;
+    std::shared_ptr<HavingExpr> sv_having_cond;
+    std::vector<std::shared_ptr<HavingExpr>> sv_having_conds;
 
     std::shared_ptr<SetClause> sv_set_clause;
     std::vector<std::shared_ptr<SetClause>> sv_set_clauses;
@@ -308,6 +373,7 @@ struct SemValue {
     std::vector<std::shared_ptr<BinaryExpr>> sv_conds;
 
     std::shared_ptr<OrderBy> sv_orderby;
+    std::vector<std::shared_ptr<OrderBy>> sv_orderbys;
 
     SetKnobType sv_setKnobType;
 };

@@ -11,6 +11,33 @@ See the Mulan PSL v2 for more details. */
 #include "analyze.h"
 
 #include <algorithm>
+#include <set>
+
+namespace {
+
+std::string default_agg_name(AggType type, const TabCol &col, bool is_star) {
+    std::string func;
+    switch (type) {
+        case AGG_COUNT: func = "COUNT"; break;
+        case AGG_MAX: func = "MAX"; break;
+        case AGG_MIN: func = "MIN"; break;
+        case AGG_SUM: func = "SUM"; break;
+        case AGG_AVG: func = "AVG"; break;
+    }
+    return func + "(" + (is_star ? "*" : col.col_name) + ")";
+}
+
+bool same_col(const TabCol &lhs, const TabCol &rhs) {
+    return lhs.tab_name == rhs.tab_name && lhs.col_name == rhs.col_name;
+}
+
+bool contains_col(const std::vector<TabCol> &cols, const TabCol &target) {
+    return std::find_if(cols.begin(), cols.end(), [&](const TabCol &col) {
+        return same_col(col, target);
+    }) != cols.end();
+}
+
+}  // namespace
 
 /**
  * @description: 分析器，进行语义分析和查询重写，需要检查不符合语义规定的部分
@@ -28,6 +55,9 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
         query->select_all = x->select_all;
         query->tab_display_names = x->tab_display_names;
         query->table_real_names = x->tab_real_names;
+        query->has_aggregation = x->has_agg || !x->group_cols.empty() || !x->having_conds.empty();
+        query->has_limit = x->has_limit;
+        query->limit = x->limit;
         for (const auto &tab_name : query->tables) {
             if (query->table_real_names.find(tab_name) == query->table_real_names.end()) {
                 query->table_real_names[tab_name] = tab_name;
@@ -52,16 +82,51 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
             }
         };
 
-        // 处理target list，再target list中添加上表名，例如 a.id
-        for (auto &sv_sel_col : x->cols) {
-            TabCol sel_col = {.tab_name = sv_sel_col->tab_name, .col_name = sv_sel_col->col_name};
-            resolve_table_alias(sel_col.tab_name);
-            query->cols.push_back(sel_col);
-        }
-        
         std::vector<ColMeta> all_cols;
         get_all_cols(query->tables, all_cols);
-        if (query->cols.empty()) {
+        // 处理target list，再target list中添加上表名，例如 a.id
+        if (x->select_items.empty()) {
+            query->select_all = true;
+        }
+        for (auto &sv_item : x->select_items) {
+            SelectItem item;
+            item.is_agg = sv_item->is_agg;
+            if (item.is_agg) {
+                item.agg.type = convert_sv_agg_type(sv_item->agg->type);
+                item.agg.is_star = sv_item->agg->is_star;
+                if (!item.agg.is_star) {
+                    item.agg.col = {.tab_name = sv_item->agg->col->tab_name,
+                                    .col_name = sv_item->agg->col->col_name};
+                    resolve_table_alias(item.agg.col.tab_name);
+                    item.agg.col = check_column(all_cols, item.agg.col);
+                    auto col_meta = std::find_if(all_cols.begin(), all_cols.end(), [&](const ColMeta &col) {
+                        return col.tab_name == item.agg.col.tab_name && col.name == item.agg.col.col_name;
+                    });
+                    if (item.agg.type != AGG_COUNT && col_meta->type == TYPE_STRING) {
+                        throw IncompatibleTypeError("NUMERIC", "STRING");
+                    }
+                }
+                item.output_name = sv_item->alias.empty()
+                                   ? default_agg_name(item.agg.type, item.agg.col, item.agg.is_star)
+                                   : sv_item->alias;
+                item.agg.output_name = item.output_name;
+            } else {
+                item.col = {.tab_name = sv_item->col->tab_name, .col_name = sv_item->col->col_name};
+                resolve_table_alias(item.col.tab_name);
+                item.col = check_column(all_cols, item.col);
+                item.output_name = sv_item->alias.empty() ? item.col.col_name : sv_item->alias;
+                query->cols.push_back(item.col);
+            }
+            query->select_items.push_back(std::move(item));
+        }
+
+        for (auto &sv_group_col : x->group_cols) {
+            TabCol group_col = {.tab_name = sv_group_col->tab_name, .col_name = sv_group_col->col_name};
+            resolve_table_alias(group_col.tab_name);
+            query->group_cols.push_back(check_column(all_cols, group_col));
+        }
+
+        if (query->cols.empty() && x->select_items.empty()) {
             // select all columns
             for (auto &col : all_cols) {
                 TabCol sel_col = {.tab_name = col.tab_name, .col_name = col.name};
@@ -73,6 +138,64 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
                 sel_col = check_column(all_cols, sel_col);  // 列元数据校验
             }
         }
+
+        auto convert_having_term = [&](const std::shared_ptr<ast::Expr> &expr) {
+            HavingTerm term;
+            if (auto sv_val = std::dynamic_pointer_cast<ast::Value>(expr)) {
+                term.val = convert_sv_value(sv_val);
+            } else if (auto sv_col = std::dynamic_pointer_cast<ast::Col>(expr)) {
+                term.is_col = true;
+                term.col = {.tab_name = sv_col->tab_name, .col_name = sv_col->col_name};
+                resolve_table_alias(term.col.tab_name);
+                term.col = check_column(all_cols, term.col);
+            } else if (auto sv_agg = std::dynamic_pointer_cast<ast::AggFunc>(expr)) {
+                term.is_agg = true;
+                term.agg.type = convert_sv_agg_type(sv_agg->type);
+                term.agg.is_star = sv_agg->is_star;
+                if (!term.agg.is_star) {
+                    term.agg.col = {.tab_name = sv_agg->col->tab_name, .col_name = sv_agg->col->col_name};
+                    resolve_table_alias(term.agg.col.tab_name);
+                    term.agg.col = check_column(all_cols, term.agg.col);
+                    auto col_meta = std::find_if(all_cols.begin(), all_cols.end(), [&](const ColMeta &col) {
+                        return col.tab_name == term.agg.col.tab_name && col.name == term.agg.col.col_name;
+                    });
+                    if (term.agg.type != AGG_COUNT && col_meta->type == TYPE_STRING) {
+                        throw IncompatibleTypeError("NUMERIC", "STRING");
+                    }
+                }
+                term.agg.output_name = default_agg_name(term.agg.type, term.agg.col, term.agg.is_star);
+            } else {
+                throw InternalError("Unexpected having expression");
+            }
+            return term;
+        };
+
+        for (auto &sv_having : x->having_conds) {
+            HavingCondition cond;
+            cond.lhs = convert_having_term(sv_having->lhs);
+            cond.op = convert_sv_comp_op(sv_having->op);
+            cond.rhs = convert_having_term(sv_having->rhs);
+            query->having_conds.push_back(std::move(cond));
+        }
+
+        for (auto &sv_order : x->order_items) {
+            OrderByItem item;
+            item.col = {.tab_name = sv_order->cols->tab_name, .col_name = sv_order->cols->col_name};
+            resolve_table_alias(item.col.tab_name);
+            item.is_desc = sv_order->orderby_dir == ast::OrderBy_DESC;
+            query->order_bys.push_back(std::move(item));
+        }
+
+        if (query->has_aggregation && query->select_all) {
+            throw RMDBError("failure");
+        }
+        if (query->has_aggregation) {
+            for (const auto &item : query->select_items) {
+                if (!item.is_agg && !contains_col(query->group_cols, item.col)) {
+                    throw RMDBError("failure");
+                }
+            }
+        }
         //处理where条件
         get_clause(x->conds, query->conds);
         for (auto &cond : query->conds) {
@@ -80,9 +203,6 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
             if (!cond.is_rhs_val) {
                 resolve_table_alias(cond.rhs_col.tab_name);
             }
-        }
-        if (x->has_sort && x->order != nullptr && x->order->cols != nullptr) {
-            resolve_table_alias(x->order->cols->tab_name);
         }
         check_clause(query->tables, query->conds);
     } else if (auto x = std::dynamic_pointer_cast<ast::UpdateStmt>(parse)) {
@@ -256,4 +376,15 @@ CompOp Analyze::convert_sv_comp_op(ast::SvCompOp op) {
         {ast::SV_OP_GT, OP_GT}, {ast::SV_OP_LE, OP_LE}, {ast::SV_OP_GE, OP_GE},
     };
     return m.at(op);
+}
+
+AggType Analyze::convert_sv_agg_type(ast::AggType type) {
+    std::map<ast::AggType, AggType> m = {
+        {ast::AGG_COUNT, AGG_COUNT},
+        {ast::AGG_MAX, AGG_MAX},
+        {ast::AGG_MIN, AGG_MIN},
+        {ast::AGG_SUM, AGG_SUM},
+        {ast::AGG_AVG, AGG_AVG},
+    };
+    return m.at(type);
 }

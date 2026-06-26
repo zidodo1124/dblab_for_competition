@@ -61,7 +61,8 @@ inline bool is_reserved_from_token(const std::string &token) {
     std::string low = lower_sql(token);
     return low == "join" || low == "on" || low == "where" || low == "order" || low == "by" ||
            low == "and" || low == "as" || low == "," || low == "inner" || low == "left" ||
-           low == "right" || low == "full" || low == "outer";
+           low == "right" || low == "full" || low == "outer" || low == "group" ||
+           low == "having" || low == "limit";
 }
 
 inline bool is_join_modifier(const std::string &token) {
@@ -186,28 +187,35 @@ inline std::optional<NormalizedSelectSql> normalize_select_sql(const std::string
     }
 
     size_t where_pos = tokens.size();
+    size_t group_pos = tokens.size();
+    size_t having_pos = tokens.size();
     size_t order_pos = tokens.size();
+    size_t limit_pos = tokens.size();
     for (size_t i = from_pos + 1; i < tokens.size(); ++i) {
         std::string low = lower_sql(tokens[i]);
         if (low == "where") {
             where_pos = i;
-            break;
+            continue;
+        }
+        if (low == "group") {
+            group_pos = i;
+            continue;
+        }
+        if (low == "having") {
+            having_pos = i;
+            continue;
         }
         if (low == "order") {
             order_pos = i;
-            break;
+            continue;
         }
-    }
-    if (where_pos != tokens.size()) {
-        for (size_t i = where_pos + 1; i < tokens.size(); ++i) {
-            if (lower_sql(tokens[i]) == "order") {
-                order_pos = i;
-                break;
-            }
+        if (low == "limit") {
+            limit_pos = i;
+            continue;
         }
     }
 
-    size_t from_end = std::min(where_pos, order_pos);
+    size_t from_end = std::min({where_pos, group_pos, having_pos, order_pos, limit_pos});
     std::vector<std::string> tables;
     std::map<std::string, std::string> alias_to_visible;
     std::vector<std::vector<std::string>> on_conds;
@@ -304,16 +312,33 @@ inline std::optional<NormalizedSelectSql> normalize_select_sql(const std::string
         all_conds.push_back(rewrite_alias_tokens(std::move(cond), alias_to_visible));
     }
     if (where_pos != tokens.size()) {
-        size_t where_end = order_pos == tokens.size() ? tokens.size() : order_pos;
+        size_t where_end = std::min({group_pos, having_pos, order_pos, limit_pos, tokens.size()});
         std::vector<std::string> where_tokens(tokens.begin() + where_pos + 1, tokens.begin() + where_end);
         if (!where_tokens.empty()) {
             all_conds.push_back(rewrite_alias_tokens(std::move(where_tokens), alias_to_visible));
         }
     }
+    std::vector<std::string> group_tokens;
+    if (group_pos != tokens.size()) {
+        size_t group_end = std::min({having_pos, order_pos, limit_pos, tokens.size()});
+        group_tokens.assign(tokens.begin() + group_pos, tokens.begin() + group_end);
+        group_tokens = rewrite_alias_tokens(std::move(group_tokens), alias_to_visible);
+    }
+    std::vector<std::string> having_tokens;
+    if (having_pos != tokens.size()) {
+        size_t having_end = std::min({order_pos, limit_pos, tokens.size()});
+        having_tokens.assign(tokens.begin() + having_pos, tokens.begin() + having_end);
+        having_tokens = rewrite_alias_tokens(std::move(having_tokens), alias_to_visible);
+    }
     std::vector<std::string> order_tokens;
     if (order_pos != tokens.size()) {
-        order_tokens.assign(tokens.begin() + order_pos, tokens.end());
+        size_t order_end = std::min(limit_pos, tokens.size());
+        order_tokens.assign(tokens.begin() + order_pos, tokens.begin() + order_end);
         order_tokens = rewrite_alias_tokens(std::move(order_tokens), alias_to_visible);
+    }
+    std::vector<std::string> limit_tokens;
+    if (limit_pos != tokens.size()) {
+        limit_tokens.assign(tokens.begin() + limit_pos, tokens.end());
     }
 
     std::ostringstream normalized;
@@ -333,8 +358,17 @@ inline std::optional<NormalizedSelectSql> normalize_select_sql(const std::string
             normalized << join_sql_tokens(all_conds[cond_idx], 0, all_conds[cond_idx].size());
         }
     }
+    if (!group_tokens.empty()) {
+        normalized << " " << join_sql_tokens(group_tokens, 0, group_tokens.size());
+    }
+    if (!having_tokens.empty()) {
+        normalized << " " << join_sql_tokens(having_tokens, 0, having_tokens.size());
+    }
     if (!order_tokens.empty()) {
         normalized << " " << join_sql_tokens(order_tokens, 0, order_tokens.size());
+    }
+    if (!limit_tokens.empty()) {
+        normalized << " " << join_sql_tokens(limit_tokens, 0, limit_tokens.size());
     }
     normalized << ";";
     result.sql = normalized.str();

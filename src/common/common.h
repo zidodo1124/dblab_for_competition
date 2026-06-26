@@ -96,6 +96,41 @@ struct Condition {
     Value rhs_val;    // right-hand side value
 };
 
+enum AggType { AGG_COUNT, AGG_MAX, AGG_MIN, AGG_SUM, AGG_AVG };
+
+struct AggCall {
+    AggType type;
+    TabCol col;
+    bool is_star = false;
+    std::string output_name;
+};
+
+struct SelectItem {
+    bool is_agg = false;
+    TabCol col;
+    AggCall agg;
+    std::string output_name;
+};
+
+struct HavingTerm {
+    bool is_agg = false;
+    bool is_col = false;
+    AggCall agg;
+    TabCol col;
+    Value val;
+};
+
+struct HavingCondition {
+    HavingTerm lhs;
+    CompOp op;
+    HavingTerm rhs;
+};
+
+struct OrderByItem {
+    TabCol col;
+    bool is_desc = false;
+};
+
 struct SetClause {
     TabCol lhs;
     Value rhs;

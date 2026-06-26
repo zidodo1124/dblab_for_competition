@@ -23,32 +23,41 @@ See the Mulan PSL v2 for more details. */
 class SortExecutor : public AbstractExecutor {
    private:
     std::unique_ptr<AbstractExecutor> prev_;
-    ColMeta cols_;                              // 框架中只支持一个键排序，需要自行修改数据结构支持多个键排序
-    bool is_desc_;
+    std::vector<ColMeta> order_cols_;
+    std::vector<bool> is_descs_;
     std::vector<std::unique_ptr<RmRecord>> tuples_;
     size_t cursor_;
 
-    int compare_tuple(const RmRecord *lhs, const RmRecord *rhs) const {
-        const char *lhs_data = lhs->data + cols_.offset;
-        const char *rhs_data = rhs->data + cols_.offset;
-        if (cols_.type == TYPE_INT) {
+    int compare_tuple(const RmRecord *lhs, const RmRecord *rhs, const ColMeta &cols) const {
+        const char *lhs_data = lhs->data + cols.offset;
+        const char *rhs_data = rhs->data + cols.offset;
+        if (cols.type == TYPE_INT) {
             int lhs_val = *reinterpret_cast<const int *>(lhs_data);
             int rhs_val = *reinterpret_cast<const int *>(rhs_data);
             return (lhs_val > rhs_val) - (lhs_val < rhs_val);
         }
-        if (cols_.type == TYPE_FLOAT) {
+        if (cols.type == TYPE_FLOAT) {
             float lhs_val = *reinterpret_cast<const float *>(lhs_data);
             float rhs_val = *reinterpret_cast<const float *>(rhs_data);
             return (lhs_val > rhs_val) - (lhs_val < rhs_val);
         }
-        return strncmp(lhs_data, rhs_data, cols_.len);
+        return strncmp(lhs_data, rhs_data, cols.len);
     }
 
    public:
     SortExecutor(std::unique_ptr<AbstractExecutor> prev, TabCol sel_cols, bool is_desc) {
         prev_ = std::move(prev);
-        cols_ = prev_->get_col_offset(sel_cols);
-        is_desc_ = is_desc;
+        order_cols_.push_back(prev_->get_col_offset(sel_cols));
+        is_descs_.push_back(is_desc);
+        cursor_ = 0;
+    }
+
+    SortExecutor(std::unique_ptr<AbstractExecutor> prev, const std::vector<OrderByItem> &order_bys) {
+        prev_ = std::move(prev);
+        for (const auto &order : order_bys) {
+            order_cols_.push_back(prev_->get_col_offset(order.col));
+            is_descs_.push_back(order.is_desc);
+        }
         cursor_ = 0;
     }
 
@@ -64,8 +73,13 @@ class SortExecutor : public AbstractExecutor {
 
         std::stable_sort(tuples_.begin(), tuples_.end(),
                          [&](const std::unique_ptr<RmRecord> &lhs, const std::unique_ptr<RmRecord> &rhs) {
-                             int cmp = compare_tuple(lhs.get(), rhs.get());
-                             return is_desc_ ? cmp > 0 : cmp < 0;
+                             for (size_t i = 0; i < order_cols_.size(); ++i) {
+                                 int cmp = compare_tuple(lhs.get(), rhs.get(), order_cols_[i]);
+                                 if (cmp != 0) {
+                                     return is_descs_[i] ? cmp > 0 : cmp < 0;
+                                 }
+                             }
+                             return false;
                          });
     }
 

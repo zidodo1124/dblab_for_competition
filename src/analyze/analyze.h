@@ -29,6 +29,13 @@ class Query{
     std::vector<Condition> conds;
     // 投影列
     std::vector<TabCol> cols;
+    std::vector<SelectItem> select_items;
+    std::vector<TabCol> group_cols;
+    std::vector<HavingCondition> having_conds;
+    std::vector<OrderByItem> order_bys;
+    bool has_aggregation = false;
+    bool has_limit = false;
+    int limit = 0;
     // 表名
     std::vector<std::string> tables;
     std::map<std::string, std::string> table_real_names;
@@ -61,5 +68,6 @@ private:
     void check_clause(const std::vector<std::string> &tab_names, std::vector<Condition> &conds);
     Value convert_sv_value(const std::shared_ptr<ast::Value> &sv_val);
     CompOp convert_sv_comp_op(ast::SvCompOp op);
+    AggType convert_sv_agg_type(ast::AggType type);
 };
 

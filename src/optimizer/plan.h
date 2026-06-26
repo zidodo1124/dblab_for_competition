@@ -49,7 +49,9 @@ typedef enum PlanTag{
     T_SortMerge,    // sort merge join
     T_Sort,
     T_Filter,
-    T_Projection
+    T_Projection,
+    T_Aggregate,
+    T_Limit
 } PlanTag;
 
 // 查询执行计划
@@ -80,7 +82,7 @@ class ScanPlan : public Plan
             len_ = cols_.back().offset + cols_.back().len;
             fed_conds_ = conds_;
             index_col_names_ = index_col_names;
-        
+       
         }
         ~ScanPlan(){}
         // 以下变量同ScanExecutor中的变量
@@ -88,11 +90,11 @@ class ScanPlan : public Plan
         std::string logical_tab_name_;
         std::string table_output_name_;
         std::vector<ColMeta> cols_;
-        std::vector<Condition> conds_;             
-        size_t len_;                               
+        std::vector<Condition> conds_;            
+        size_t len_;                              
         std::vector<Condition> fed_conds_;
         std::vector<std::string> index_col_names_;
-    
+   
 };
 
 class JoinPlan : public Plan
@@ -164,14 +166,58 @@ class SortPlan : public Plan
         {
             Plan::tag = tag;
             subplan_ = std::move(subplan);
-            sel_col_ = sel_col;
-            is_desc_ = is_desc;
+            order_bys_.push_back({sel_col, is_desc});
+        }
+        SortPlan(PlanTag tag, std::shared_ptr<Plan> subplan, std::vector<OrderByItem> order_bys)
+        {
+            Plan::tag = tag;
+            subplan_ = std::move(subplan);
+            order_bys_ = std::move(order_bys);
         }
         ~SortPlan(){}
         std::shared_ptr<Plan> subplan_;
-        TabCol sel_col_;
-        bool is_desc_;
-        
+        std::vector<OrderByItem> order_bys_;
+       
+};
+
+class LimitPlan : public Plan
+{
+    public:
+        LimitPlan(PlanTag tag, std::shared_ptr<Plan> subplan, int limit)
+        {
+            Plan::tag = tag;
+            subplan_ = std::move(subplan);
+            limit_ = limit;
+        }
+        ~LimitPlan(){}
+        std::shared_ptr<Plan> subplan_;
+        int limit_;
+};
+
+class AggregatePlan : public Plan
+{
+    public:
+        AggregatePlan(PlanTag tag, std::shared_ptr<Plan> subplan, std::vector<SelectItem> select_items,
+                      std::vector<TabCol> group_cols, std::vector<HavingCondition> having_conds,
+                      std::vector<OrderByItem> order_bys, bool has_limit, int limit)
+        {
+            Plan::tag = tag;
+            subplan_ = std::move(subplan);
+            select_items_ = std::move(select_items);
+            group_cols_ = std::move(group_cols);
+            having_conds_ = std::move(having_conds);
+            order_bys_ = std::move(order_bys);
+            has_limit_ = has_limit;
+            limit_ = limit;
+        }
+        ~AggregatePlan(){}
+        std::shared_ptr<Plan> subplan_;
+        std::vector<SelectItem> select_items_;
+        std::vector<TabCol> group_cols_;
+        std::vector<HavingCondition> having_conds_;
+        std::vector<OrderByItem> order_bys_;
+        bool has_limit_;
+        int limit_;
 };
 
 // dml语句，包括insert; delete; update; select语句　
@@ -221,7 +267,7 @@ class OtherPlan : public Plan
         OtherPlan(PlanTag tag, std::string tab_name)
         {
             Plan::tag = tag;
-            tab_name_ = std::move(tab_name);            
+            tab_name_ = std::move(tab_name);           
         }
         ~OtherPlan(){}
         std::string tab_name_;

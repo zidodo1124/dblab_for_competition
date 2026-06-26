@@ -35,8 +35,8 @@
    especially those whose name start with YY_ or yy_.  They are
    private implementation details that can be changed or removed.  */
 
-#ifndef YY_YY_HOME_LX_RMDB_SRC_PARSER_YACC_TAB_H_INCLUDED
-# define YY_YY_HOME_LX_RMDB_SRC_PARSER_YACC_TAB_H_INCLUDED
+#ifndef YY_YY_MNT_D_STUDY_SUBMIT_RMDB_SRC_PARSER_YACC_TAB_H_INCLUDED
+# define YY_YY_MNT_D_STUDY_SUBMIT_RMDB_SRC_PARSER_YACC_TAB_H_INCLUDED
 /* Debug traces.  */
 #ifndef YYDEBUG
 # define YYDEBUG 0
@@ -92,15 +92,24 @@ extern int yydebug;
     LEVEL = 293,                   /* LEVEL  */
     SNAPSHOT = 294,                /* SNAPSHOT  */
     SERIALIZABLE = 295,            /* SERIALIZABLE  */
-    LEQ = 296,                     /* LEQ  */
-    NEQ = 297,                     /* NEQ  */
-    GEQ = 298,                     /* GEQ  */
-    T_EOF = 299,                   /* T_EOF  */
-    IDENTIFIER = 300,              /* IDENTIFIER  */
-    VALUE_STRING = 301,            /* VALUE_STRING  */
-    VALUE_INT = 302,               /* VALUE_INT  */
-    VALUE_FLOAT = 303,             /* VALUE_FLOAT  */
-    VALUE_BOOL = 304               /* VALUE_BOOL  */
+    GROUP = 296,                   /* GROUP  */
+    HAVING = 297,                  /* HAVING  */
+    AS = 298,                      /* AS  */
+    COUNT = 299,                   /* COUNT  */
+    MAX = 300,                     /* MAX  */
+    MIN = 301,                     /* MIN  */
+    SUM = 302,                     /* SUM  */
+    AVG = 303,                     /* AVG  */
+    LIMIT = 304,                   /* LIMIT  */
+    LEQ = 305,                     /* LEQ  */
+    NEQ = 306,                     /* NEQ  */
+    GEQ = 307,                     /* GEQ  */
+    T_EOF = 308,                   /* T_EOF  */
+    IDENTIFIER = 309,              /* IDENTIFIER  */
+    VALUE_STRING = 310,            /* VALUE_STRING  */
+    VALUE_INT = 311,               /* VALUE_INT  */
+    VALUE_FLOAT = 312,             /* VALUE_FLOAT  */
+    VALUE_BOOL = 313               /* VALUE_BOOL  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif
@@ -127,4 +136,4 @@ struct YYLTYPE
 int yyparse (void);
 
 
-#endif /* !YY_YY_HOME_LX_RMDB_SRC_PARSER_YACC_TAB_H_INCLUDED  */
+#endif /* !YY_YY_MNT_D_STUDY_SUBMIT_RMDB_SRC_PARSER_YACC_TAB_H_INCLUDED  */

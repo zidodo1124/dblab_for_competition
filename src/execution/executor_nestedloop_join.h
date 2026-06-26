@@ -23,7 +23,6 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
     std::vector<ColMeta> cols_;                 // join后获得的记录的字段
 
     std::vector<Condition> fed_conds_;          // join条件
-    std::map<std::string, std::string> tab_display_names_;
     bool isend;
 
     std::unique_ptr<RmRecord> join_current_tuple() {
@@ -41,7 +40,6 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
                 auto rec = join_current_tuple();
                 if (eval_conds(cols_, fed_conds_, rec.get())) {
                     isend = false;
-                    rows_++;
                     return;
                 }
                 right_->nextTuple();
@@ -55,9 +53,8 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
     }
 
    public:
-    NestedLoopJoinExecutor(std::unique_ptr<AbstractExecutor> left, std::unique_ptr<AbstractExecutor> right,
-                            std::vector<Condition> conds,
-                            std::map<std::string, std::string> tab_display_names = {}) {
+    NestedLoopJoinExecutor(std::unique_ptr<AbstractExecutor> left, std::unique_ptr<AbstractExecutor> right, 
+                            std::vector<Condition> conds) {
         left_ = std::move(left);
         right_ = std::move(right);
         len_ = left_->tupleLen() + right_->tupleLen();
@@ -70,18 +67,13 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
         cols_.insert(cols_.end(), right_cols.begin(), right_cols.end());
         isend = false;
         fed_conds_ = std::move(conds);
-        tab_display_names_ = std::move(tab_display_names);
 
     }
 
     void beginTuple() override {
         left_->beginTuple();
-        if (left_->is_end()) {
-            isend = true;
-            return;
-        }
         right_->beginTuple();
-        if (right_->is_end()) {
+        if (left_->is_end() || right_->is_end()) {
             isend = true;
             return;
         }
@@ -109,23 +101,4 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
     ColMeta get_col_offset(const TabCol &target) override { return *get_col(cols_, target); }
 
     Rid &rid() override { return _abstract_rid; }
-
-    std::vector<std::string> tables() const override {
-        auto left_tables = left_->tables();
-        auto right_tables = right_->tables();
-        left_tables.insert(left_tables.end(), right_tables.begin(), right_tables.end());
-        std::sort(left_tables.begin(), left_tables.end());
-        left_tables.erase(std::unique(left_tables.begin(), left_tables.end()), left_tables.end());
-        return left_tables;
-    }
-
-    std::string explain(int depth = 0) const override {
-        auto cond_strs = sorted_condition_strings(fed_conds_, tab_display_names_);
-        std::ostringstream os;
-        os << indent(depth) << "Join(tables=[" << join_strings(tables())
-           << "], condition=[" << join_strings(cond_strs, false) << "], rows=" << rows_ << ")\n";
-        os << left_->explain(depth + 1);
-        os << right_->explain(depth + 1);
-        return os.str();
-    }
 };

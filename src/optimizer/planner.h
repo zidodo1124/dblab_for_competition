@@ -50,14 +50,12 @@ class Planner {
     std::shared_ptr<Plan> make_one_rel(std::shared_ptr<Query> query);
 
     std::shared_ptr<Plan> generate_sort_plan(std::shared_ptr<Query> query, std::shared_ptr<Plan> plan);
-
+    
     std::shared_ptr<Plan> generate_select_plan(std::shared_ptr<Query> query, Context *context);
-    std::shared_ptr<Plan> generate_explain_analyze_plan(std::shared_ptr<Query> query, Context *context);
 
 
     // int get_indexNo(std::string tab_name, std::vector<Condition> curr_conds);
-    bool get_index_cols(std::string tab_name, std::vector<Condition> curr_conds,
-                        std::vector<std::string>& index_col_names, std::string logical_tab_name = "");
+    bool get_index_cols(std::string tab_name, std::vector<Condition> curr_conds, std::vector<std::string>& index_col_names);
 
     ColType interp_sv_type(ast::SvType sv_type) {
         std::map<ast::SvType, ColType> m = {

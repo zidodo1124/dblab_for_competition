@@ -24,16 +24,6 @@ class InsertExecutor : public AbstractExecutor {
     Rid rid_;                       // 插入的位置，由于系统默认插入时不指定位置，因此当前rid_在插入后才赋值
     SmManager *sm_manager_;
 
-    std::vector<char> make_index_key(const RmRecord *rec, const IndexMeta &index) {
-        std::vector<char> key(index.col_tot_len);
-        int offset = 0;
-        for (int i = 0; i < index.col_num; ++i) {
-            memcpy(key.data() + offset, rec->data + index.cols[i].offset, index.cols[i].len);
-            offset += index.cols[i].len;
-        }
-        return key;
-    }
-
    public:
     InsertExecutor(SmManager *sm_manager, const std::string &tab_name, std::vector<Value> values, Context *context) {
         sm_manager_ = sm_manager;
@@ -48,8 +38,6 @@ class InsertExecutor : public AbstractExecutor {
     };
 
     std::unique_ptr<RmRecord> Next() override {
-        auto write_guard = context_->txn_mgr_ != nullptr ? context_->txn_mgr_->acquire_write_latch()
-                                                         : std::unique_lock<std::mutex>();
         // Make record buffer
         RmRecord rec(fh_->get_file_hdr().record_size);
         for (size_t i = 0; i < values_.size(); i++) {
@@ -61,36 +49,20 @@ class InsertExecutor : public AbstractExecutor {
             val.init_raw(col.len);
             memcpy(rec.data + col.offset, val.raw->data, col.len);
         }
-        std::vector<std::vector<char>> keys;
-        keys.reserve(tab_.indexes.size());
-        if (context_->txn_mgr_ != nullptr) {
-            context_->txn_mgr_->check_insert_conflict(tab_name_, rec, context_->txn_);
-        }
-        for (auto &index : tab_.indexes) {
-            auto ih = sm_manager_->ihs_.at(sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols)).get();
-            auto key = make_index_key(&rec, index);
-            std::vector<Rid> existing;
-            if (ih->get_value(key.data(), &existing, context_->txn_)) {
-                throw UniqueConstraintViolationError(tab_name_);
-            }
-            keys.push_back(std::move(key));
-        }
-
         // Insert into record file
         rid_ = fh_->insert_record(rec.data, context_);
-
+        
         // Insert into index
         for(size_t i = 0; i < tab_.indexes.size(); ++i) {
             auto& index = tab_.indexes[i];
             auto ih = sm_manager_->ihs_.at(sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols)).get();
-            ih->insert_entry(keys[i].data(), rid_, context_->txn_);
-        }
-        if (context_->txn_ != nullptr) {
-            if (context_->txn_mgr_ != nullptr) {
-                context_->txn_mgr_->check_ser_write(tab_name_, rid_, nullptr, &rec, context_->txn_);
-                context_->txn_mgr_->append_insert_version(tab_name_, rid_, rec, context_->txn_);
+            std::vector<char> key(index.col_tot_len);
+            int offset = 0;
+            for(size_t i = 0; i < index.col_num; ++i) {
+                memcpy(key.data() + offset, rec.data + index.cols[i].offset, index.cols[i].len);
+                offset += index.cols[i].len;
             }
-            context_->txn_->append_write_record(new WriteRecord(WType::INSERT_TUPLE, tab_name_, rid_));
+            ih->insert_entry(key.data(), rid_, context_->txn_);
         }
         return nullptr;
     }

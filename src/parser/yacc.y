@@ -23,7 +23,6 @@ using namespace ast;
 // keywords
 %token SHOW TABLES CREATE TABLE DROP DESC INSERT INTO VALUES DELETE FROM ASC ORDER BY
 WHERE UPDATE SET SELECT INT CHAR FLOAT INDEX AND JOIN EXIT HELP TXN_BEGIN TXN_COMMIT TXN_ABORT TXN_ROLLBACK ORDER_BY ENABLE_NESTLOOP ENABLE_SORTMERGE
-TRANSACTION ISOLATION LEVEL SNAPSHOT SERIALIZABLE
 // non-keywords
 %token LEQ NEQ GEQ T_EOF
 
@@ -116,14 +115,6 @@ setStmt:
         SET set_knob_type '=' VALUE_BOOL
     {
         $$ = std::make_shared<SetStmt>($2, $4);
-    }
-    |   SET TRANSACTION ISOLATION LEVEL SNAPSHOT ISOLATION
-    {
-        $$ = std::make_shared<SetTransactionIsolation>(false);
-    }
-    |   SET TRANSACTION ISOLATION LEVEL SERIALIZABLE
-    {
-        $$ = std::make_shared<SetTransactionIsolation>(true);
     }
     ;
 
@@ -344,10 +335,6 @@ setClause:
         colName '=' value
     {
         $$ = std::make_shared<SetClause>($1, $3);
-    }
-    |   colName '=' colName '+' value
-    {
-        $$ = std::make_shared<SetClause>($1, $3, $5);
     }
     ;
 

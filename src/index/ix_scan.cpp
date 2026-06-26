@@ -18,17 +18,14 @@ void IxScan::next() {
     assert(!is_end());
     IxNodeHandle *node = ih_->fetch_node(iid_.page_no);
     assert(node->is_leaf_page());
-    if (iid_.slot_no < node->get_size()) {
-        iid_.slot_no++;
-    }
-    while (iid_.page_no != ih_->file_hdr_->last_leaf_ && iid_.slot_no >= node->get_size()) {
-        page_id_t next_page_no = node->get_next_leaf();
-        bpm_->unpin_page(node->get_page_id(), false);
+    assert(iid_.slot_no < node->get_size());
+    // increment slot no
+    iid_.slot_no++;
+    if (iid_.page_no != ih_->file_hdr_->last_leaf_ && iid_.slot_no == node->get_size()) {
+        // go to next leaf
         iid_.slot_no = 0;
-        iid_.page_no = next_page_no;
-        node = ih_->fetch_node(iid_.page_no);
+        iid_.page_no = node->get_next_leaf();
     }
-    bpm_->unpin_page(node->get_page_id(), false);
 }
 
 Rid IxScan::rid() const {

@@ -12,7 +12,6 @@ See the Mulan PSL v2 for more details. */
 
 #include <iostream>
 #include <map>
-#include <functional>
 
 // 此处重载了<<操作符，在ColMeta中进行了调用
 template<typename T, typename = typename std::enable_if<std::is_enum<T>::value, T>::type>
@@ -38,13 +37,6 @@ struct Rid {
     }
 
     friend bool operator!=(const Rid &x, const Rid &y) { return !(x == y); }
-};
-
-template <>
-struct std::hash<Rid> {
-    size_t operator()(const Rid &rid) const {
-        return (static_cast<size_t>(rid.page_no) << 32) ^ static_cast<unsigned int>(rid.slot_no);
-    }
 };
 
 enum ColType {

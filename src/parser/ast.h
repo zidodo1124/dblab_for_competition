@@ -12,7 +12,6 @@ See the Mulan PSL v2 for more details. */
 #include <vector>
 #include <string>
 #include <memory>
-#include <map>
 
 enum JoinType {
     INNER_JOIN, LEFT_JOIN, RIGHT_JOIN, FULL_JOIN
@@ -46,12 +45,6 @@ struct Help : public TreeNode {
 };
 
 struct ShowTables : public TreeNode {
-};
-
-struct ShowIndex : public TreeNode {
-    std::string tab_name;
-
-    ShowIndex(std::string tab_name_) : tab_name(std::move(tab_name_)) {}
 };
 
 struct TxnBegin : public TreeNode {
@@ -161,15 +154,9 @@ struct Col : public Expr {
 struct SetClause : public TreeNode {
     std::string col_name;
     std::shared_ptr<Value> val;
-    bool is_self_add = false;
-    std::string rhs_col_name;
 
     SetClause(std::string col_name_, std::shared_ptr<Value> val_) :
             col_name(std::move(col_name_)), val(std::move(val_)) {}
-
-    SetClause(std::string col_name_, std::string rhs_col_name_, std::shared_ptr<Value> val_) :
-            col_name(std::move(col_name_)), val(std::move(val_)), is_self_add(true),
-            rhs_col_name(std::move(rhs_col_name_)) {}
 };
 
 struct BinaryExpr : public TreeNode {
@@ -227,21 +214,13 @@ struct JoinExpr : public TreeNode {
             left(std::move(left_)), right(std::move(right_)), conds(std::move(conds_)), type(type_) {}
 };
 
-extern bool pending_is_explain_analyze;
-extern std::map<std::string, std::string> pending_tab_display_names;
-extern std::map<std::string, std::string> pending_tab_real_names;
-
 struct SelectStmt : public TreeNode {
     std::vector<std::shared_ptr<Col>> cols;
     std::vector<std::string> tabs;
     std::vector<std::shared_ptr<BinaryExpr>> conds;
     std::vector<std::shared_ptr<JoinExpr>> jointree;
-    bool is_explain_analyze = false;
-    bool select_all = false;
-    std::map<std::string, std::string> tab_display_names;
-    std::map<std::string, std::string> tab_real_names;
 
-
+    
     bool has_sort;
     std::shared_ptr<OrderBy> order;
 
@@ -250,13 +229,9 @@ struct SelectStmt : public TreeNode {
                std::vector<std::string> tabs_,
                std::vector<std::shared_ptr<BinaryExpr>> conds_,
                std::shared_ptr<OrderBy> order_) :
-            cols(std::move(cols_)), tabs(std::move(tabs_)), conds(std::move(conds_)),
+            cols(std::move(cols_)), tabs(std::move(tabs_)), conds(std::move(conds_)), 
             order(std::move(order_)) {
                 has_sort = (bool)order;
-                select_all = cols.empty();
-                is_explain_analyze = pending_is_explain_analyze;
-                tab_display_names = pending_tab_display_names;
-                tab_real_names = pending_tab_real_names;
             }
 };
 
@@ -267,12 +242,6 @@ struct SetStmt : public TreeNode {
 
     SetStmt(SetKnobType &type, bool bool_value) : 
         set_knob_type_(type), bool_val_(bool_value) { }
-};
-
-struct SetTransactionIsolation : public TreeNode {
-    bool serializable;
-
-    explicit SetTransactionIsolation(bool serializable_) : serializable(serializable_) {}
 };
 
 // Semantic value

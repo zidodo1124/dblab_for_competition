@@ -157,38 +157,6 @@ void SmManager::show_tables(Context* context) {
 }
 
 /**
- * @description: 显示某个表上的索引信息
- * @param {string&} tab_name 表名称
- * @param {Context*} context
- */
-void SmManager::show_index(const std::string& tab_name, Context* context) {
-    TabMeta &tab = db_.get_table(tab_name);
-
-    std::fstream outfile;
-    outfile.open("output.txt", std::ios::out | std::ios::app);
-    for (auto &index : tab.indexes) {
-        std::string cols = "(";
-        for (int i = 0; i < index.col_num; ++i) {
-            if (i > 0) {
-                cols += ",";
-            }
-            cols += index.cols[i].name;
-        }
-        cols += ")";
-
-        std::string line = "| " + tab_name + " | unique | " + cols + " |\n";
-        outfile << line;
-        if (context->ellipsis_ == false && *context->offset_ + line.length() < BUFFER_LENGTH) {
-            memcpy(context->data_send_ + *(context->offset_), line.c_str(), line.length());
-            *(context->offset_) += static_cast<int>(line.length());
-        } else {
-            context->ellipsis_ = true;
-        }
-    }
-    outfile.close();
-}
-
-/**
  * @description: 显示表的元数据
  * @param {string&} tab_name 表名称
  * @param {Context*} context 
@@ -301,29 +269,15 @@ void SmManager::create_index(const std::string& tab_name, const std::vector<std:
                             .col_num = static_cast<int>(cols.size()), .cols = cols};
     auto ih = ihs_.at(index_name).get();
     auto fh = fhs_.at(tab_name).get();
-    try {
-        for (RmScan scan(fh); !scan.is_end(); scan.next()) {
-            auto rec = fh->get_record(scan.rid(), context);
-            std::vector<char> key(col_tot_len);
-            int offset = 0;
-            for (auto &col : cols) {
-                memcpy(key.data() + offset, rec->data + col.offset, col.len);
-                offset += col.len;
-            }
-            std::vector<Rid> existing;
-            if (ih->get_value(key.data(), &existing, context->txn_)) {
-                throw UniqueConstraintViolationError(tab_name);
-            }
-            ih->insert_entry(key.data(), scan.rid(), context->txn_);
+    for (RmScan scan(fh); !scan.is_end(); scan.next()) {
+        auto rec = fh->get_record(scan.rid(), context);
+        std::vector<char> key(col_tot_len);
+        int offset = 0;
+        for (auto &col : cols) {
+            memcpy(key.data() + offset, rec->data + col.offset, col.len);
+            offset += col.len;
         }
-    } catch (...) {
-        auto ih_it = ihs_.find(index_name);
-        if (ih_it != ihs_.end()) {
-            ix_manager_->close_index(ih_it->second.get());
-            ihs_.erase(ih_it);
-        }
-        ix_manager_->destroy_index(tab_name, cols);
-        throw;
+        ih->insert_entry(key.data(), scan.rid(), context->txn_);
     }
 
     for (auto &col : cols) {
@@ -350,22 +304,7 @@ void SmManager::drop_index(const std::string& tab_name, const std::vector<std::s
     }
     ix_manager_->destroy_index(tab_name, col_names);
     for (auto &col : index_meta->cols) {
-        bool still_indexed = false;
-        for (auto it = tab.indexes.begin(); it != tab.indexes.end(); ++it) {
-            if (it == index_meta) {
-                continue;
-            }
-            for (auto &other_col : it->cols) {
-                if (other_col.name == col.name) {
-                    still_indexed = true;
-                    break;
-                }
-            }
-            if (still_indexed) {
-                break;
-            }
-        }
-        tab.get_col(col.name)->index = still_indexed;
+        tab.get_col(col.name)->index = false;
     }
     tab.indexes.erase(index_meta);
     flush_meta();

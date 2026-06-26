@@ -13,7 +13,6 @@ See the Mulan PSL v2 for more details. */
 #include <cassert>
 #include <cstring>
 #include <memory>
-#include <map>
 #include <string>
 #include <vector>
 
@@ -31,10 +30,6 @@ class Query{
     std::vector<TabCol> cols;
     // 表名
     std::vector<std::string> tables;
-    std::map<std::string, std::string> table_real_names;
-    bool is_explain_analyze = false;
-    bool select_all = false;
-    std::map<std::string, std::string> tab_display_names;
     // update 的set 值
     std::vector<SetClause> set_clauses;
     //insert 的values值

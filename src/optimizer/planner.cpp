@@ -10,15 +10,9 @@ See the Mulan PSL v2 for more details. */
 
 #include "planner.h"
 
-#include <algorithm>
-#include <functional>
-#include <iterator>
-#include <map>
 #include <memory>
-#include <set>
 
 #include "execution/executor_delete.h"
-#include "execution/executor_filter.h"
 #include "execution/executor_index_scan.h"
 #include "execution/executor_insert.h"
 #include "execution/executor_nestedloop_join.h"
@@ -28,77 +22,16 @@ See the Mulan PSL v2 for more details. */
 #include "index/ix.h"
 #include "record_printer.h"
 
-bool Planner::get_index_cols(std::string tab_name, std::vector<Condition> curr_conds,
-                             std::vector<std::string>& index_col_names, std::string logical_tab_name) {
+// 目前的索引匹配规则为：完全匹配索引字段，且全部为单点查询，不会自动调整where条件的顺序
+bool Planner::get_index_cols(std::string tab_name, std::vector<Condition> curr_conds, std::vector<std::string>& index_col_names) {
     index_col_names.clear();
+    for(auto& cond: curr_conds) {
+        if(cond.is_rhs_val && cond.op == OP_EQ && cond.lhs_col.tab_name.compare(tab_name) == 0)
+            index_col_names.push_back(cond.lhs_col.col_name);
+    }
     TabMeta& tab = sm_manager_->db_.get_table(tab_name);
-    if (logical_tab_name.empty()) {
-        logical_tab_name = tab_name;
-    }
-
-    std::map<CompOp, CompOp> swap_op = {
-        {OP_EQ, OP_EQ}, {OP_NE, OP_NE}, {OP_LT, OP_GT}, {OP_GT, OP_LT}, {OP_LE, OP_GE}, {OP_GE, OP_LE},
-    };
-
-    std::vector<Condition> normalized;
-    for (auto cond : curr_conds) {
-        if (!cond.is_rhs_val) {
-            continue;
-        }
-        if (cond.lhs_col.tab_name == logical_tab_name) {
-            normalized.push_back(cond);
-        } else if (cond.rhs_col.tab_name == logical_tab_name) {
-            std::swap(cond.lhs_col, cond.rhs_col);
-            cond.op = swap_op.at(cond.op);
-            normalized.push_back(cond);
-        }
-    }
-
-    int best_prefix_len = 0;
-    bool best_has_range = false;
-    std::vector<std::string> best_cols;
-    for (auto &index : tab.indexes) {
-        int prefix_len = 0;
-        bool has_range = false;
-        for (auto &col : index.cols) {
-            bool has_eq = false;
-            bool has_range_on_col = false;
-            for (auto &cond : normalized) {
-                if (cond.lhs_col.col_name != col.name) {
-                    continue;
-                }
-                if (cond.op == OP_EQ) {
-                    has_eq = true;
-                } else if (cond.op != OP_NE) {
-                    has_range_on_col = true;
-                }
-            }
-            if (has_eq) {
-                prefix_len++;
-                continue;
-            }
-            if (has_range_on_col) {
-                prefix_len++;
-                has_range = true;
-            }
-            break;
-        }
-        if (prefix_len > best_prefix_len ||
-            (prefix_len == best_prefix_len && has_range && !best_has_range)) {
-            best_prefix_len = prefix_len;
-            best_has_range = has_range;
-            best_cols.clear();
-            for (auto &col : index.cols) {
-                best_cols.push_back(col.name);
-            }
-        }
-    }
-
-    if (best_prefix_len == 0) {
-        return false;
-    }
-    index_col_names = std::move(best_cols);
-    return true;
+    if(tab.is_index(index_col_names)) return true;
+    return false;
 }
 
 /**
@@ -129,9 +62,9 @@ int push_conds(Condition *cond, std::shared_ptr<Plan> plan)
 {
     if(auto x = std::dynamic_pointer_cast<ScanPlan>(plan))
     {
-        if(x->logical_tab_name_.compare(cond->lhs_col.tab_name) == 0) {
+        if(x->tab_name_.compare(cond->lhs_col.tab_name) == 0) {
             return 1;
-        } else if(x->logical_tab_name_.compare(cond->rhs_col.tab_name) == 0){
+        } else if(x->tab_name_.compare(cond->rhs_col.tab_name) == 0){
             return 2;
         } else {
             return 0;
@@ -173,10 +106,10 @@ std::shared_ptr<Plan> pop_scan(int *scantbl, std::string table, std::vector<std:
 {
     for (size_t i = 0; i < plans.size(); i++) {
         auto x = std::dynamic_pointer_cast<ScanPlan>(plans[i]);
-        if(x->logical_tab_name_.compare(table) == 0)
+        if(x->tab_name_.compare(table) == 0)
         {
             scantbl[i] = 1;
-            joined_tables.emplace_back(x->logical_tab_name_);
+            joined_tables.emplace_back(x->tab_name_);
             return plans[i];
         }
     }
@@ -216,16 +149,14 @@ std::shared_ptr<Plan> Planner::make_one_rel(std::shared_ptr<Query> query)
         auto curr_conds = pop_conds(query->conds, tables[i]);
         // int index_no = get_indexNo(tables[i], curr_conds);
         std::vector<std::string> index_col_names;
-        std::string real_table = query->table_real_names.count(tables[i]) ? query->table_real_names.at(tables[i])
-                                                                          : tables[i];
-        bool index_exist = get_index_cols(real_table, curr_conds, index_col_names, tables[i]);
+        bool index_exist = get_index_cols(tables[i], curr_conds, index_col_names);
         if (index_exist == false) {  // 该表没有索引
             index_col_names.clear();
-            table_scan_executors[i] =
-                std::make_shared<ScanPlan>(T_SeqScan, sm_manager_, real_table, curr_conds, index_col_names, tables[i]);
+            table_scan_executors[i] = 
+                std::make_shared<ScanPlan>(T_SeqScan, sm_manager_, tables[i], curr_conds, index_col_names);
         } else {  // 存在索引
             table_scan_executors[i] =
-                std::make_shared<ScanPlan>(T_IndexScan, sm_manager_, real_table, curr_conds, index_col_names, tables[i]);
+                std::make_shared<ScanPlan>(T_IndexScan, sm_manager_, tables[i], curr_conds, index_col_names);
         }
     }
     // 只有一个表，不需要join。
@@ -233,51 +164,96 @@ std::shared_ptr<Plan> Planner::make_one_rel(std::shared_ptr<Query> query)
     {
         return table_scan_executors[0];
     }
-    auto join_conds = std::move(query->conds);
-    std::shared_ptr<Plan> table_join_executors = table_scan_executors[0];
-    std::set<std::string> joined{tables[0]};
-    std::vector<bool> used_cond(join_conds.size(), false);
-    auto cond_tables = [](const Condition &cond) {
-        std::set<std::string> result{cond.lhs_col.tab_name};
-        if (!cond.is_rhs_val) {
-            result.insert(cond.rhs_col.tab_name);
-        }
-        return result;
-    };
-    auto subset = [](const std::set<std::string> &small, const std::set<std::string> &large) {
-        for (const auto &item : small) {
-            if (large.find(item) == large.end()) {
-                return false;
-            }
-        }
-        return true;
-    };
+    // 获取where条件
+    auto conds = std::move(query->conds);
+    std::shared_ptr<Plan> table_join_executors;
+    
+    int scantbl[tables.size()];
+    for(size_t i = 0; i < tables.size(); i++)
+    {
+        scantbl[i] = -1;
+    }
+    // 假设在ast中已经添加了jointree，这里需要修改的逻辑是，先处理jointree，然后再考虑剩下的部分
+    if(conds.size() >= 1)
+    {
+        // 有连接条件
 
-    for (size_t i = 1; i < tables.size(); ++i) {
-        const auto &right_table = tables[i];
-        std::set<std::string> new_joined = joined;
-        new_joined.insert(right_table);
-        std::vector<Condition> curr_join_conds;
-        for (size_t cond_idx = 0; cond_idx < join_conds.size(); ++cond_idx) {
-            if (used_cond[cond_idx]) {
-                continue;
+        // 根据连接条件，生成第一层join
+        std::vector<std::string> joined_tables(tables.size());
+        auto it = conds.begin();
+        while (it != conds.end()) {
+            std::shared_ptr<Plan> left , right;
+            left = pop_scan(scantbl, it->lhs_col.tab_name, joined_tables, table_scan_executors);
+            right = pop_scan(scantbl, it->rhs_col.tab_name, joined_tables, table_scan_executors);
+            std::vector<Condition> join_conds{*it};
+            //建立join
+            // 判断使用哪种join方式
+            if(enable_nestedloop_join && enable_sortmerge_join) {
+                // 默认nested loop join
+                table_join_executors = std::make_shared<JoinPlan>(T_NestLoop, std::move(left), std::move(right), join_conds);
+            } else if(enable_nestedloop_join) {
+                table_join_executors = std::make_shared<JoinPlan>(T_NestLoop, std::move(left), std::move(right), join_conds);
+            } else if(enable_sortmerge_join) {
+                table_join_executors = std::make_shared<JoinPlan>(T_SortMerge, std::move(left), std::move(right), join_conds);
+            } else {
+                // error
+                throw RMDBError("No join executor selected!");
             }
-            auto cond_tabs = cond_tables(join_conds[cond_idx]);
-            if (subset(cond_tabs, new_joined) && cond_tabs.find(right_table) != cond_tabs.end()) {
-                curr_join_conds.push_back(join_conds[cond_idx]);
-                used_cond[cond_idx] = true;
-            }
+
+            // table_join_executors = std::make_shared<JoinPlan>(T_NestLoop, std::move(left), std::move(right), join_conds);
+            it = conds.erase(it);
+            break;
         }
-        table_join_executors = std::make_shared<JoinPlan>(T_NestLoop, std::move(table_join_executors),
-                                                          table_scan_executors[i], curr_join_conds);
-        joined = std::move(new_joined);
+        // 根据连接条件，生成第2-n层join
+        it = conds.begin();
+        while (it != conds.end()) {
+            std::shared_ptr<Plan> left_need_to_join_executors = nullptr;
+            std::shared_ptr<Plan> right_need_to_join_executors = nullptr;
+            bool isneedreverse = false;
+            if (std::find(joined_tables.begin(), joined_tables.end(), it->lhs_col.tab_name) == joined_tables.end()) {
+                left_need_to_join_executors = pop_scan(scantbl, it->lhs_col.tab_name, joined_tables, table_scan_executors);
+            }
+            if (std::find(joined_tables.begin(), joined_tables.end(), it->rhs_col.tab_name) == joined_tables.end()) {
+                right_need_to_join_executors = pop_scan(scantbl, it->rhs_col.tab_name, joined_tables, table_scan_executors);
+                isneedreverse = true;
+            } 
+
+            if(left_need_to_join_executors != nullptr && right_need_to_join_executors != nullptr) {
+                std::vector<Condition> join_conds{*it};
+                std::shared_ptr<Plan> temp_join_executors = std::make_shared<JoinPlan>(T_NestLoop, 
+                                                                    std::move(left_need_to_join_executors), 
+                                                                    std::move(right_need_to_join_executors), 
+                                                                    join_conds);
+                table_join_executors = std::make_shared<JoinPlan>(T_NestLoop, std::move(temp_join_executors), 
+                                                                    std::move(table_join_executors), 
+                                                                    std::vector<Condition>());
+            } else if(left_need_to_join_executors != nullptr || right_need_to_join_executors != nullptr) {
+                if(isneedreverse) {
+                    std::map<CompOp, CompOp> swap_op = {
+                        {OP_EQ, OP_EQ}, {OP_NE, OP_NE}, {OP_LT, OP_GT}, {OP_GT, OP_LT}, {OP_LE, OP_GE}, {OP_GE, OP_LE},
+                    };
+                    std::swap(it->lhs_col, it->rhs_col);
+                    it->op = swap_op.at(it->op);
+                    left_need_to_join_executors = std::move(right_need_to_join_executors);
+                }
+                std::vector<Condition> join_conds{*it};
+                table_join_executors = std::make_shared<JoinPlan>(T_NestLoop, std::move(left_need_to_join_executors), 
+                                                                    std::move(table_join_executors), join_conds);
+            } else {
+                push_conds(std::move(&(*it)), table_join_executors);
+            }
+            it = conds.erase(it);
+        }
+    } else {
+        table_join_executors = table_scan_executors[0];
+        scantbl[0] = 1;
     }
 
-    if (auto root_join = std::dynamic_pointer_cast<JoinPlan>(table_join_executors)) {
-        for (size_t cond_idx = 0; cond_idx < join_conds.size(); ++cond_idx) {
-            if (!used_cond[cond_idx]) {
-                root_join->conds_.push_back(join_conds[cond_idx]);
-            }
+    //连接剩余表
+    for (size_t i = 0; i < tables.size(); i++) {
+        if(scantbl[i] == -1) {
+            table_join_executors = std::make_shared<JoinPlan>(T_NestLoop, std::move(table_join_executors),
+                                                    std::move(table_scan_executors[i]), std::vector<Condition>());
         }
     }
 
@@ -296,35 +272,15 @@ std::shared_ptr<Plan> Planner::generate_sort_plan(std::shared_ptr<Query> query, 
     std::vector<ColMeta> all_cols;
     for (auto &sel_tab_name : tables) {
         // 这里db_不能写成get_db(), 注意要传指针
-        std::string real_table = query->table_real_names.count(sel_tab_name) ? query->table_real_names.at(sel_tab_name)
-                                                                             : sel_tab_name;
-        auto sel_tab_cols = sm_manager_->db_.get_table(real_table).cols;
-        for (auto &col : sel_tab_cols) {
-            col.tab_name = sel_tab_name;
-            all_cols.push_back(col);
-        }
+        const auto &sel_tab_cols = sm_manager_->db_.get_table(sel_tab_name).cols;
+        all_cols.insert(all_cols.end(), sel_tab_cols.begin(), sel_tab_cols.end());
     }
-    TabCol order_col = {.tab_name = x->order->cols->tab_name, .col_name = x->order->cols->col_name};
     TabCol sel_col;
-    bool found = false;
     for (auto &col : all_cols) {
-        if (col.name != order_col.col_name) {
-            continue;
-        }
-        if (!order_col.tab_name.empty() && col.tab_name != order_col.tab_name) {
-            continue;
-        }
-        if (found && order_col.tab_name.empty()) {
-            throw AmbiguousColumnError(order_col.col_name);
-        }
+        if(col.name.compare(x->order->cols->col_name) == 0 )
         sel_col = {.tab_name = col.tab_name, .col_name = col.name};
-        found = true;
     }
-    if (!found) {
-        throw ColumnNotFoundError(order_col.tab_name.empty() ? order_col.col_name
-                                                            : order_col.tab_name + "." + order_col.col_name);
-    }
-    return std::make_shared<SortPlan>(T_Sort, std::move(plan), sel_col,
+    return std::make_shared<SortPlan>(T_Sort, std::move(plan), sel_col, 
                                     x->order->orderby_dir == ast::OrderBy_DESC);
 }
 
@@ -347,297 +303,6 @@ std::shared_ptr<Plan> Planner::generate_select_plan(std::shared_ptr<Query> query
                                                         std::move(sel_cols));
 
     return plannerRoot;
-}
-
-namespace {
-
-std::set<std::string> condition_tables(const Condition &cond) {
-    std::set<std::string> tables;
-    tables.insert(cond.lhs_col.tab_name);
-    if (!cond.is_rhs_val) {
-        tables.insert(cond.rhs_col.tab_name);
-    }
-    return tables;
-}
-
-bool has_col(const std::vector<TabCol> &cols, const TabCol &target) {
-    return std::find_if(cols.begin(), cols.end(), [&](const TabCol &col) {
-        return col.tab_name == target.tab_name && col.col_name == target.col_name;
-    }) != cols.end();
-}
-
-void add_col(std::vector<TabCol> &cols, const TabCol &target) {
-    if (!has_col(cols, target)) {
-        cols.push_back(target);
-    }
-}
-
-std::string display_table(const std::map<std::string, std::string> &display_names, const std::string &tab_name) {
-    auto it = display_names.find(tab_name);
-    return it == display_names.end() ? tab_name : it->second;
-}
-
-std::string display_col_key(const TabCol &col, const std::map<std::string, std::string> &display_names) {
-    return display_table(display_names, col.tab_name) + "." + col.col_name;
-}
-
-void sort_cols_for_display(std::vector<TabCol> &cols, const std::map<std::string, std::string> &display_names) {
-    std::sort(cols.begin(), cols.end(), [&](const TabCol &lhs, const TabCol &rhs) {
-        return display_col_key(lhs, display_names) < display_col_key(rhs, display_names);
-    });
-}
-
-bool is_subset(const std::set<std::string> &small, const std::set<std::string> &large) {
-    for (const auto &item : small) {
-        if (large.find(item) == large.end()) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool connects_to_joined(const Condition &cond, const std::set<std::string> &joined,
-                        const std::string &candidate) {
-    auto tables = condition_tables(cond);
-    if (tables.find(candidate) == tables.end()) {
-        return false;
-    }
-    for (const auto &table : tables) {
-        if (table != candidate && joined.find(table) != joined.end()) {
-            return true;
-        }
-    }
-    return false;
-}
-
-std::shared_ptr<Plan> build_join_plan_for_order(
-    const std::vector<std::string> &join_order, const std::map<std::string, std::shared_ptr<Plan>> &table_plans,
-    const std::vector<Condition> &join_conds, const std::map<std::string, std::string> &display_names,
-    bool append_unused_conds) {
-    std::shared_ptr<Plan> root = table_plans.at(join_order[0]);
-    std::set<std::string> joined{join_order[0]};
-    std::vector<bool> used_join_cond(join_conds.size(), false);
-
-    for (size_t i = 1; i < join_order.size(); ++i) {
-        const auto &right_table = join_order[i];
-        std::set<std::string> new_joined = joined;
-        new_joined.insert(right_table);
-        std::vector<Condition> curr_join_conds;
-        for (size_t cond_idx = 0; cond_idx < join_conds.size(); ++cond_idx) {
-            if (used_join_cond[cond_idx]) {
-                continue;
-            }
-            auto cond_tabs = condition_tables(join_conds[cond_idx]);
-            if (is_subset(cond_tabs, new_joined) && cond_tabs.find(right_table) != cond_tabs.end()) {
-                curr_join_conds.push_back(join_conds[cond_idx]);
-                used_join_cond[cond_idx] = true;
-            }
-        }
-        root = std::make_shared<JoinPlan>(T_NestLoop, std::move(root), table_plans.at(right_table),
-                                          curr_join_conds, display_names);
-        joined = std::move(new_joined);
-    }
-
-    if (append_unused_conds) {
-        auto root_join = std::dynamic_pointer_cast<JoinPlan>(root);
-        for (size_t cond_idx = 0; cond_idx < join_conds.size(); ++cond_idx) {
-            if (!used_join_cond[cond_idx]) {
-                root_join->conds_.push_back(join_conds[cond_idx]);
-            }
-        }
-    }
-    return root;
-}
-
-std::unique_ptr<AbstractExecutor> make_count_executor(std::shared_ptr<Plan> plan, SmManager *sm_manager,
-                                                       Context *context) {
-    if (auto x = std::dynamic_pointer_cast<ProjectionPlan>(plan)) {
-        return std::make_unique<ProjectionExecutor>(make_count_executor(x->subplan_, sm_manager, context),
-                                                    x->sel_cols_, x->display_all_, x->tab_display_names_);
-    }
-    if (auto x = std::dynamic_pointer_cast<FilterPlan>(plan)) {
-        return std::make_unique<FilterExecutor>(make_count_executor(x->subplan_, sm_manager, context),
-                                                x->conds_, x->tab_display_names_);
-    }
-    if (auto x = std::dynamic_pointer_cast<ScanPlan>(plan)) {
-        return std::make_unique<SeqScanExecutor>(sm_manager, x->tab_name_, x->conds_, context, false,
-                                                 x->logical_tab_name_, x->table_output_name_);
-    }
-    if (auto x = std::dynamic_pointer_cast<JoinPlan>(plan)) {
-        return std::make_unique<NestedLoopJoinExecutor>(make_count_executor(x->left_, sm_manager, context),
-                                                        make_count_executor(x->right_, sm_manager, context),
-                                                        x->conds_, x->tab_display_names_);
-    }
-    throw InternalError("Unsupported explain count plan");
-}
-
-size_t count_plan_rows(std::shared_ptr<Plan> plan, SmManager *sm_manager, Context *context) {
-    auto executor = make_count_executor(std::move(plan), sm_manager, context);
-    size_t rows = 0;
-    for (executor->beginTuple(); !executor->is_end(); executor->nextTuple()) {
-        auto tuple = executor->Next();
-        (void)tuple;
-        ++rows;
-    }
-    return rows;
-}
-
-std::string order_key(const std::vector<std::string> &order) {
-    std::ostringstream os;
-    for (const auto &tab : order) {
-        os << tab << '\n';
-    }
-    return os.str();
-}
-
-size_t plan_rows_for_order_prefix(
-    const std::vector<std::string> &order, const std::map<std::string, std::shared_ptr<Plan>> &table_plans,
-    const std::vector<Condition> &join_conds, const std::map<std::string, std::string> &display_names,
-    SmManager *sm_manager, Context *context) {
-    return count_plan_rows(build_join_plan_for_order(order, table_plans, join_conds, display_names, false),
-                           sm_manager, context);
-}
-
-std::vector<std::string> choose_min_result_join_order(
-    const std::vector<std::string> &tables, const std::vector<Condition> &join_conds,
-    const std::map<std::string, std::shared_ptr<Plan>> &table_plans,
-    const std::map<std::string, std::string> &display_names, SmManager *sm_manager, Context *context) {
-    if (tables.size() <= 2) {
-        return tables;
-    }
-
-    std::vector<std::string> best_order;
-    size_t best_cost = 0;
-    size_t best_final_rows = 0;
-    bool found_best = false;
-
-    std::function<void(std::vector<std::string> &, std::vector<std::string> &, size_t)> search =
-        [&](std::vector<std::string> &order, std::vector<std::string> &remaining, size_t cost) {
-            if (remaining.empty()) {
-                size_t final_rows = plan_rows_for_order_prefix(order, table_plans, join_conds, display_names,
-                                                               sm_manager, context);
-                if (!found_best || cost < best_cost ||
-                    (cost == best_cost && final_rows < best_final_rows) ||
-                    (cost == best_cost && final_rows == best_final_rows &&
-                     order_key(order) < order_key(best_order))) {
-                    found_best = true;
-                    best_cost = cost;
-                    best_final_rows = final_rows;
-                    best_order = order;
-                }
-                return;
-            }
-
-            std::set<std::string> joined(order.begin(), order.end());
-            std::vector<std::string> candidates;
-            for (const auto &candidate : remaining) {
-                if (order.empty()) {
-                    candidates.push_back(candidate);
-                } else {
-                    for (const auto &cond : join_conds) {
-                        if (connects_to_joined(cond, joined, candidate)) {
-                            candidates.push_back(candidate);
-                            break;
-                        }
-                    }
-                }
-            }
-            if (candidates.empty()) {
-                candidates = remaining;
-            }
-            std::sort(candidates.begin(), candidates.end());
-
-            for (const auto &candidate : candidates) {
-                order.push_back(candidate);
-                remaining.erase(std::remove(remaining.begin(), remaining.end(), candidate), remaining.end());
-                size_t next_cost = cost;
-                if (order.size() >= 2) {
-                    next_cost += plan_rows_for_order_prefix(order, table_plans, join_conds, display_names,
-                                                            sm_manager, context);
-                }
-                search(order, remaining, next_cost);
-                remaining.push_back(candidate);
-                std::sort(remaining.begin(), remaining.end());
-                order.pop_back();
-            }
-        };
-
-    std::vector<std::string> order;
-    std::vector<std::string> remaining = tables;
-    std::sort(remaining.begin(), remaining.end());
-    search(order, remaining, 0);
-
-    return found_best ? best_order : tables;
-}
-
-}  // namespace
-
-std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Query> query, Context *context) {
-    std::map<std::string, std::vector<Condition>> local_conds;
-    std::vector<Condition> join_conds;
-    std::map<std::string, int> real_table_counts;
-
-    for (const auto &tab_name : query->tables) {
-        std::string real_table = query->table_real_names.count(tab_name) ? query->table_real_names.at(tab_name)
-                                                                         : tab_name;
-        real_table_counts[real_table]++;
-    }
-
-    for (const auto &cond : query->conds) {
-        auto tables = condition_tables(cond);
-        if (tables.size() == 1) {
-            local_conds[*tables.begin()].push_back(cond);
-        } else {
-            join_conds.push_back(cond);
-        }
-    }
-
-    std::map<std::string, std::vector<TabCol>> pushed_cols;
-    bool push_project = !query->select_all && query->tables.size() > 1;
-    if (push_project) {
-        for (const auto &col : query->cols) {
-            add_col(pushed_cols[col.tab_name], col);
-        }
-        for (const auto &cond : join_conds) {
-            add_col(pushed_cols[cond.lhs_col.tab_name], cond.lhs_col);
-            add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
-        }
-        for (auto &entry : pushed_cols) {
-            sort_cols_for_display(entry.second, query->tab_display_names);
-        }
-    }
-
-    std::map<std::string, std::shared_ptr<Plan>> table_plans;
-    for (const auto &tab_name : query->tables) {
-        std::vector<std::string> index_cols;
-        std::string real_table = query->table_real_names.count(tab_name) ? query->table_real_names.at(tab_name)
-                                                                         : tab_name;
-        std::string table_output_name = real_table_counts[real_table] > 1 ? tab_name : real_table;
-        std::shared_ptr<Plan> plan =
-            std::make_shared<ScanPlan>(T_SeqScan, sm_manager_, real_table, std::vector<Condition>(), index_cols,
-                                       tab_name, table_output_name);
-        if (!local_conds[tab_name].empty()) {
-            plan = std::make_shared<FilterPlan>(T_Filter, std::move(plan), local_conds[tab_name],
-                                                query->tab_display_names);
-        }
-        if (push_project && !pushed_cols[tab_name].empty()) {
-            plan = std::make_shared<ProjectionPlan>(T_Projection, std::move(plan), pushed_cols[tab_name], false,
-                                                    query->tab_display_names);
-        }
-        table_plans[tab_name] = std::move(plan);
-    }
-
-    std::vector<std::string> join_order = choose_min_result_join_order(
-        query->tables, join_conds, table_plans, query->tab_display_names, sm_manager_, context);
-    std::shared_ptr<Plan> root = build_join_plan_for_order(
-        join_order, table_plans, join_conds, query->tab_display_names, true);
-
-    auto root_cols = query->cols;
-    if (!query->select_all) {
-        sort_cols_for_display(root_cols, query->tab_display_names);
-    }
-    return std::make_shared<ProjectionPlan>(T_Projection, std::move(root), root_cols, query->select_all,
-                                            query->tab_display_names);
 }
 
 // 生成DDL语句和DML语句的查询执行计划
@@ -715,15 +380,9 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
 
         std::shared_ptr<plannerInfo> root = std::make_shared<plannerInfo>(x);
         // 生成select语句的查询执行计划
-        if (query->is_explain_analyze) {
-            std::shared_ptr<Plan> projection = generate_explain_analyze_plan(std::move(query), context);
-            plannerRoot = std::make_shared<DMLPlan>(T_ExplainAnalyze, projection, std::string(), std::vector<Value>(),
+        std::shared_ptr<Plan> projection = generate_select_plan(std::move(query), context);
+        plannerRoot = std::make_shared<DMLPlan>(T_select, projection, std::string(), std::vector<Value>(),
                                                     std::vector<Condition>(), std::vector<SetClause>());
-        } else {
-            std::shared_ptr<Plan> projection = generate_select_plan(std::move(query), context);
-            plannerRoot = std::make_shared<DMLPlan>(T_select, projection, std::string(), std::vector<Value>(),
-                                                    std::vector<Condition>(), std::vector<SetClause>());
-        }
     } else {
         throw InternalError("Unexpected AST root");
     }

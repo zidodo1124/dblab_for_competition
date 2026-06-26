@@ -15,18 +15,13 @@ See the Mulan PSL v2 for more details. */
 #include "index/ix.h"
 #include "system/sm.h"
 
-#include <algorithm>
 #include <cstring>
-#include <map>
-#include <set>
-#include <sstream>
 
 class AbstractExecutor {
    public:
     Rid _abstract_rid;
 
     Context *context_;
-    size_t rows_ = 0;
 
     virtual ~AbstractExecutor() = default;
 
@@ -39,12 +34,6 @@ class AbstractExecutor {
 
     virtual std::string getType() { return "AbstractExecutor"; };
 
-    virtual std::string explain(int depth = 0) const { return ""; }
-
-    virtual std::vector<std::string> tables() const { return {}; }
-
-    size_t rows() const { return rows_; }
-
     virtual void beginTuple(){};
 
     virtual void nextTuple(){};
@@ -56,79 +45,6 @@ class AbstractExecutor {
     virtual std::unique_ptr<RmRecord> Next() = 0;
 
     virtual ColMeta get_col_offset(const TabCol &target) { return ColMeta();};
-
-    static std::string indent(int depth) {
-        return std::string(depth, '\t');
-    }
-
-    static std::string display_table(const std::map<std::string, std::string> &display_names,
-                                     const std::string &tab_name) {
-        auto it = display_names.find(tab_name);
-        return it == display_names.end() ? tab_name : it->second;
-    }
-
-    static std::string format_col(const TabCol &col, const std::map<std::string, std::string> &display_names) {
-        std::string tab_name = display_table(display_names, col.tab_name);
-        return tab_name.empty() ? col.col_name : tab_name + "." + col.col_name;
-    }
-
-    static std::string format_value(const Value &val) {
-        if (!val.display_val.empty()) {
-            return val.display_val;
-        }
-        std::ostringstream os;
-        if (val.type == TYPE_INT) {
-            os << val.int_val;
-        } else if (val.type == TYPE_FLOAT) {
-            os << val.float_val;
-        } else {
-            os << "'" << val.str_val << "'";
-        }
-        return os.str();
-    }
-
-    static std::string op_to_string(CompOp op) {
-        switch (op) {
-            case OP_EQ: return "=";
-            case OP_NE: return "<>";
-            case OP_LT: return "<";
-            case OP_GT: return ">";
-            case OP_LE: return "<=";
-            case OP_GE: return ">=";
-        }
-        return "";
-    }
-
-    static std::string format_condition(const Condition &cond,
-                                        const std::map<std::string, std::string> &display_names) {
-        std::string rhs = cond.is_rhs_val ? format_value(cond.rhs_val) : format_col(cond.rhs_col, display_names);
-        return format_col(cond.lhs_col, display_names) + op_to_string(cond.op) + rhs;
-    }
-
-    static std::string join_strings(std::vector<std::string> vals, bool sort_vals = true) {
-        if (sort_vals) {
-            std::sort(vals.begin(), vals.end());
-        }
-        std::ostringstream os;
-        for (size_t i = 0; i < vals.size(); ++i) {
-            if (i > 0) {
-                os << ", ";
-            }
-            os << vals[i];
-        }
-        return os.str();
-    }
-
-    static std::vector<std::string> sorted_condition_strings(
-        const std::vector<Condition> &conds, const std::map<std::string, std::string> &display_names) {
-        std::vector<std::string> cond_strs;
-        cond_strs.reserve(conds.size());
-        for (const auto &cond : conds) {
-            cond_strs.push_back(format_condition(cond, display_names));
-        }
-        std::sort(cond_strs.begin(), cond_strs.end());
-        return cond_strs;
-    }
 
     std::vector<ColMeta>::const_iterator get_col(const std::vector<ColMeta> &rec_cols, const TabCol &target) {
         auto pos = std::find_if(rec_cols.begin(), rec_cols.end(), [&](const ColMeta &col) {

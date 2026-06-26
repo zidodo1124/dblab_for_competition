@@ -13,32 +13,26 @@ See the Mulan PSL v2 for more details. */
 #include <cassert>
 #include <cstring>
 #include <memory>
-#include <map>
 #include <string>
 #include <vector>
-#include "common/common.h"
 #include "parser/ast.h"
 
 #include "parser/parser.h"
-#include "system/sm.h"
 
 typedef enum PlanTag{
     T_Invalid = 1,
     T_Help,
     T_ShowTable,
-    T_ShowIndex,
     T_DescTable,
     T_CreateTable,
     T_DropTable,
     T_CreateIndex,
     T_DropIndex,
     T_SetKnob,
-    T_SetIsolation,
     T_Insert,
     T_Update,
     T_Delete,
     T_select,
-    T_ExplainAnalyze,
     T_Transaction_begin,
     T_Transaction_commit,
     T_Transaction_abort,
@@ -48,7 +42,6 @@ typedef enum PlanTag{
     T_NestLoop,
     T_SortMerge,    // sort merge join
     T_Sort,
-    T_Filter,
     T_Projection
 } PlanTag;
 
@@ -63,20 +56,13 @@ public:
 class ScanPlan : public Plan
 {
     public:
-        ScanPlan(PlanTag tag, SmManager *sm_manager, std::string tab_name, std::vector<Condition> conds,
-                 std::vector<std::string> index_col_names, std::string logical_tab_name = "",
-                 std::string table_output_name = "")
+        ScanPlan(PlanTag tag, SmManager *sm_manager, std::string tab_name, std::vector<Condition> conds, std::vector<std::string> index_col_names)
         {
             Plan::tag = tag;
             tab_name_ = std::move(tab_name);
-            logical_tab_name_ = logical_tab_name.empty() ? tab_name_ : std::move(logical_tab_name);
-            table_output_name_ = table_output_name.empty() ? tab_name_ : std::move(table_output_name);
             conds_ = std::move(conds);
             TabMeta &tab = sm_manager->db_.get_table(tab_name_);
             cols_ = tab.cols;
-            for (auto &col : cols_) {
-                col.tab_name = logical_tab_name_;
-            }
             len_ = cols_.back().offset + cols_.back().len;
             fed_conds_ = conds_;
             index_col_names_ = index_col_names;
@@ -84,10 +70,8 @@ class ScanPlan : public Plan
         }
         ~ScanPlan(){}
         // 以下变量同ScanExecutor中的变量
-        std::string tab_name_;
-        std::string logical_tab_name_;
-        std::string table_output_name_;
-        std::vector<ColMeta> cols_;
+        std::string tab_name_;                     
+        std::vector<ColMeta> cols_;                
         std::vector<Condition> conds_;             
         size_t len_;                               
         std::vector<Condition> fed_conds_;
@@ -98,14 +82,12 @@ class ScanPlan : public Plan
 class JoinPlan : public Plan
 {
     public:
-        JoinPlan(PlanTag tag, std::shared_ptr<Plan> left, std::shared_ptr<Plan> right, std::vector<Condition> conds,
-                 std::map<std::string, std::string> tab_display_names = {})
+        JoinPlan(PlanTag tag, std::shared_ptr<Plan> left, std::shared_ptr<Plan> right, std::vector<Condition> conds)
         {
             Plan::tag = tag;
             left_ = std::move(left);
             right_ = std::move(right);
             conds_ = std::move(conds);
-            tab_display_names_ = std::move(tab_display_names);
             type = INNER_JOIN;
         }
         ~JoinPlan(){}
@@ -115,46 +97,23 @@ class JoinPlan : public Plan
         std::shared_ptr<Plan> right_;
         // 连接条件
         std::vector<Condition> conds_;
-        std::map<std::string, std::string> tab_display_names_;
         // future TODO: 后续可以支持的连接类型
         JoinType type;
-};
-
-class FilterPlan : public Plan
-{
-    public:
-        FilterPlan(PlanTag tag, std::shared_ptr<Plan> subplan, std::vector<Condition> conds,
-                   std::map<std::string, std::string> tab_display_names = {})
-        {
-            Plan::tag = tag;
-            subplan_ = std::move(subplan);
-            conds_ = std::move(conds);
-            tab_display_names_ = std::move(tab_display_names);
-        }
-        ~FilterPlan(){}
-        std::shared_ptr<Plan> subplan_;
-        std::vector<Condition> conds_;
-        std::map<std::string, std::string> tab_display_names_;
 };
 
 class ProjectionPlan : public Plan
 {
     public:
-        ProjectionPlan(PlanTag tag, std::shared_ptr<Plan> subplan, std::vector<TabCol> sel_cols,
-                       bool display_all = false, std::map<std::string, std::string> tab_display_names = {})
+        ProjectionPlan(PlanTag tag, std::shared_ptr<Plan> subplan, std::vector<TabCol> sel_cols)
         {
             Plan::tag = tag;
             subplan_ = std::move(subplan);
             sel_cols_ = std::move(sel_cols);
-            display_all_ = display_all;
-            tab_display_names_ = std::move(tab_display_names);
         }
         ~ProjectionPlan(){}
         std::shared_ptr<Plan> subplan_;
         std::vector<TabCol> sel_cols_;
-        bool display_all_;
-        std::map<std::string, std::string> tab_display_names_;
-
+        
 };
 
 class SortPlan : public Plan
@@ -238,16 +197,6 @@ class SetKnobPlan : public Plan
         }
     ast::SetKnobType set_knob_type_;
     bool bool_value_;
-};
-
-class SetIsolationPlan : public Plan
-{
-    public:
-        explicit SetIsolationPlan(IsolationLevel isolation_level) {
-            Plan::tag = T_SetIsolation;
-            isolation_level_ = isolation_level;
-        }
-    IsolationLevel isolation_level_;
 };
 
 class plannerInfo{

@@ -12,8 +12,5 @@ See the Mulan PSL v2 for more details. */
 namespace ast {
 
 std::shared_ptr<TreeNode> parse_tree;
-bool pending_is_explain_analyze = false;
-std::map<std::string, std::string> pending_tab_display_names;
-std::map<std::string, std::string> pending_tab_real_names;
 
 }

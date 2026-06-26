@@ -339,6 +339,18 @@ class AggregateExecutor : public AbstractExecutor {
         }
     }
 
+    bool should_emit_empty_input_row() const {
+        if (!group_cols_.empty() || select_items_.empty()) {
+            return false;
+        }
+        for (const auto &item : select_items_) {
+            if (!item.is_agg || item.agg.type != AGG_COUNT) {
+                return false;
+            }
+        }
+        return true;
+    }
+
    public:
     AggregateExecutor(std::unique_ptr<AbstractExecutor> prev, std::vector<SelectItem> select_items,
                       std::vector<TabCol> group_cols, std::vector<HavingCondition> having_conds,
@@ -393,7 +405,7 @@ class AggregateExecutor : public AbstractExecutor {
             }
         }
 
-        if (groups.empty() && group_cols_.empty()) {
+        if (groups.empty() && should_emit_empty_input_row()) {
             GroupState group;
             group.sample = std::make_unique<RmRecord>(prev_->tupleLen());
             group.aggs.resize(agg_calls_.size());

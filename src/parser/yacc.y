@@ -266,6 +266,16 @@ condition:
         $$ = std::make_shared<BinaryExpr>($1, $2,
                 std::static_pointer_cast<Expr>(std::make_shared<Col>("", "__invalid_where_agg__")));
     }
+    |   value op agg_func
+    {
+        $$ = std::make_shared<BinaryExpr>(std::make_shared<Col>("", "__invalid_where_agg__"), $2,
+                std::static_pointer_cast<Expr>(std::make_shared<Col>("", "__invalid_where_agg__")));
+    }
+    |   agg_func op agg_func
+    {
+        $$ = std::make_shared<BinaryExpr>(std::make_shared<Col>("", "__invalid_where_agg__"), $2,
+                std::static_pointer_cast<Expr>(std::make_shared<Col>("", "__invalid_where_agg__")));
+    }
     ;
 
 optWhereClause:
@@ -277,7 +287,7 @@ optWhereClause:
     ;
 
 whereClause:
-        condition
+        condition 
     {
         $$ = std::vector<std::shared_ptr<BinaryExpr>>{$1};
     }
@@ -508,9 +518,9 @@ tableList:
     ;
 
 opt_order_clause:
-    ORDER BY order_clause     
-    {
-        $$ = $3;
+    ORDER BY order_clause      
+    { 
+        $$ = $3; 
     }
     |   /* epsilon */ { $$ = {}; }
     ;
@@ -527,11 +537,11 @@ order_clause:
     ;
 
 order_item:
-      col  opt_asc_desc
-    {
+      col  opt_asc_desc 
+    { 
         $$ = std::make_shared<OrderBy>($1, $2);
     }
-    ;  
+    ;   
 
 opt_limit_clause:
         LIMIT VALUE_INT
@@ -548,7 +558,7 @@ opt_asc_desc:
     ASC          { $$ = OrderBy_ASC;     }
     |  DESC      { $$ = OrderBy_DESC;    }
     |       { $$ = OrderBy_DEFAULT; }
-    ;   
+    ;    
 
 set_knob_type:
     ENABLE_NESTLOOP { $$ = EnableNestLoop; }

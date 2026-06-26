@@ -11,7 +11,6 @@ See the Mulan PSL v2 for more details. */
 #include "planner.h"
 
 #include <algorithm>
-#include <functional>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -408,18 +407,26 @@ bool is_subset(const std::set<std::string> &small, const std::set<std::string> &
     return true;
 }
 
-bool connects_to_joined(const Condition &cond, const std::set<std::string> &joined,
-                        const std::string &candidate) {
-    auto tables = condition_tables(cond);
-    if (tables.find(candidate) == tables.end()) {
-        return false;
+Condition normalize_join_condition(const Condition &cond, const std::set<std::string> &left_tables,
+                                   const std::string &right_table) {
+    if (cond.is_rhs_val) {
+        return cond;
     }
-    for (const auto &table : tables) {
-        if (table != candidate && joined.find(table) != joined.end()) {
-            return true;
-        }
+
+    Condition normalized = cond;
+    bool lhs_on_left = left_tables.find(cond.lhs_col.tab_name) != left_tables.end();
+    bool rhs_on_left = left_tables.find(cond.rhs_col.tab_name) != left_tables.end();
+    bool lhs_on_right = cond.lhs_col.tab_name == right_table;
+    bool rhs_on_right = cond.rhs_col.tab_name == right_table;
+    if (!lhs_on_left && lhs_on_right && rhs_on_left && !rhs_on_right) {
+        static const std::map<CompOp, CompOp> swap_op = {
+            {OP_EQ, OP_EQ}, {OP_NE, OP_NE}, {OP_LT, OP_GT},
+            {OP_GT, OP_LT}, {OP_LE, OP_GE}, {OP_GE, OP_LE},
+        };
+        std::swap(normalized.lhs_col, normalized.rhs_col);
+        normalized.op = swap_op.at(normalized.op);
     }
-    return false;
+    return normalized;
 }
 
 std::shared_ptr<Plan> build_join_plan_for_order(
@@ -441,7 +448,7 @@ std::shared_ptr<Plan> build_join_plan_for_order(
             }
             auto cond_tabs = condition_tables(join_conds[cond_idx]);
             if (is_subset(cond_tabs, new_joined) && cond_tabs.find(right_table) != cond_tabs.end()) {
-                curr_join_conds.push_back(join_conds[cond_idx]);
+                curr_join_conds.push_back(normalize_join_condition(join_conds[cond_idx], joined, right_table));
                 used_join_cond[cond_idx] = true;
             }
         }
@@ -459,133 +466,6 @@ std::shared_ptr<Plan> build_join_plan_for_order(
         }
     }
     return root;
-}
-
-std::unique_ptr<AbstractExecutor> make_count_executor(std::shared_ptr<Plan> plan, SmManager *sm_manager,
-                                                       Context *context) {
-    if (auto x = std::dynamic_pointer_cast<ProjectionPlan>(plan)) {
-        return std::make_unique<ProjectionExecutor>(make_count_executor(x->subplan_, sm_manager, context),
-                                                    x->sel_cols_, x->display_all_, x->tab_display_names_);
-    }
-    if (auto x = std::dynamic_pointer_cast<FilterPlan>(plan)) {
-        return std::make_unique<FilterExecutor>(make_count_executor(x->subplan_, sm_manager, context),
-                                                x->conds_, x->tab_display_names_);
-    }
-    if (auto x = std::dynamic_pointer_cast<ScanPlan>(plan)) {
-        return std::make_unique<SeqScanExecutor>(sm_manager, x->tab_name_, x->conds_, context, false,
-                                                 x->logical_tab_name_, x->table_output_name_);
-    }
-    if (auto x = std::dynamic_pointer_cast<JoinPlan>(plan)) {
-        return std::make_unique<NestedLoopJoinExecutor>(make_count_executor(x->left_, sm_manager, context),
-                                                        make_count_executor(x->right_, sm_manager, context),
-                                                        x->conds_, x->tab_display_names_);
-    }
-    throw InternalError("Unsupported explain count plan");
-}
-
-size_t count_plan_rows(std::shared_ptr<Plan> plan, SmManager *sm_manager, Context *context) {
-    auto executor = make_count_executor(std::move(plan), sm_manager, context);
-    size_t rows = 0;
-    for (executor->beginTuple(); !executor->is_end(); executor->nextTuple()) {
-        auto tuple = executor->Next();
-        (void)tuple;
-        ++rows;
-    }
-    return rows;
-}
-
-size_t plan_rows_for_order_prefix(
-    const std::vector<std::string> &order, const std::map<std::string, std::shared_ptr<Plan>> &table_plans,
-    const std::vector<Condition> &join_conds, const std::map<std::string, std::string> &display_names,
-    SmManager *sm_manager, Context *context) {
-    return count_plan_rows(build_join_plan_for_order(order, table_plans, join_conds, display_names, false),
-                           sm_manager, context);
-}
-
-std::vector<std::string> choose_min_result_join_order(
-    const std::vector<std::string> &tables, const std::vector<Condition> &join_conds,
-    const std::map<std::string, std::shared_ptr<Plan>> &table_plans,
-    const std::map<std::string, std::string> &display_names, SmManager *sm_manager, Context *context) {
-    if (tables.size() <= 2 || join_conds.empty()) {
-        return tables;
-    }
-
-    std::vector<std::string> best_order;
-    size_t best_cost = 0;
-    size_t best_final_rows = 0;
-    bool found_best = false;
-
-    std::map<std::string, size_t> table_rank;
-    for (size_t i = 0; i < tables.size(); ++i) {
-        table_rank[tables[i]] = i;
-    }
-    auto rank_less = [&](const std::string &lhs, const std::string &rhs) {
-        return table_rank.at(lhs) < table_rank.at(rhs);
-    };
-    auto rank_key = [&](const std::vector<std::string> &order) {
-        std::ostringstream os;
-        for (const auto &tab : order) {
-            os << table_rank.at(tab) << '\n';
-        }
-        return os.str();
-    };
-
-    std::function<void(std::vector<std::string> &, std::vector<std::string> &, size_t)> search =
-        [&](std::vector<std::string> &order, std::vector<std::string> &remaining, size_t cost) {
-            if (remaining.empty()) {
-                size_t final_rows = plan_rows_for_order_prefix(order, table_plans, join_conds, display_names,
-                                                               sm_manager, context);
-                if (!found_best || cost < best_cost ||
-                    (cost == best_cost && final_rows < best_final_rows) ||
-                    (cost == best_cost && final_rows == best_final_rows &&
-                     rank_key(order) < rank_key(best_order))) {
-                    found_best = true;
-                    best_cost = cost;
-                    best_final_rows = final_rows;
-                    best_order = order;
-                }
-                return;
-            }
-
-            std::set<std::string> joined(order.begin(), order.end());
-            std::vector<std::string> candidates;
-            for (const auto &candidate : remaining) {
-                if (order.empty()) {
-                    candidates.push_back(candidate);
-                } else {
-                    for (const auto &cond : join_conds) {
-                        if (connects_to_joined(cond, joined, candidate)) {
-                            candidates.push_back(candidate);
-                            break;
-                        }
-                    }
-                }
-            }
-            if (candidates.empty()) {
-                candidates = remaining;
-            }
-            std::sort(candidates.begin(), candidates.end(), rank_less);
-
-            for (const auto &candidate : candidates) {
-                order.push_back(candidate);
-                remaining.erase(std::remove(remaining.begin(), remaining.end(), candidate), remaining.end());
-                size_t next_cost = cost;
-                if (order.size() >= 2) {
-                    next_cost += plan_rows_for_order_prefix(order, table_plans, join_conds, display_names,
-                                                            sm_manager, context);
-                }
-                search(order, remaining, next_cost);
-                remaining.push_back(candidate);
-                std::sort(remaining.begin(), remaining.end(), rank_less);
-                order.pop_back();
-            }
-        };
-
-    std::vector<std::string> order;
-    std::vector<std::string> remaining = tables;
-    search(order, remaining, 0);
-
-    return found_best ? best_order : tables;
 }
 
 }  // namespace
@@ -645,8 +525,7 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         table_plans[tab_name] = std::move(plan);
     }
 
-    std::vector<std::string> join_order = choose_min_result_join_order(
-        query->tables, join_conds, table_plans, query->tab_display_names, sm_manager_, context);
+    std::vector<std::string> join_order = query->tables;
     std::shared_ptr<Plan> root = build_join_plan_for_order(
         join_order, table_plans, join_conds, query->tab_display_names, true);
 

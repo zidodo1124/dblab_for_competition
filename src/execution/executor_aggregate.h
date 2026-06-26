@@ -466,5 +466,9 @@ class AggregateExecutor : public AbstractExecutor {
         return AbstractExecutor::format_record_value(col, rec_buf);
     }
 
+    std::vector<std::string> tables() const override { return prev_->tables(); }
+
+    std::string explain(int depth = 0) const override { return prev_->explain(depth); }
+
     Rid &rid() override { return _abstract_rid; }
 };

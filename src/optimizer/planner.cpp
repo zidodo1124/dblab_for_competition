@@ -383,6 +383,21 @@ void add_col(std::vector<TabCol> &cols, const TabCol &target) {
     }
 }
 
+void add_agg_source_col(std::map<std::string, std::vector<TabCol>> &pushed_cols, const AggCall &agg) {
+    if (!agg.is_star) {
+        add_col(pushed_cols[agg.col.tab_name], agg.col);
+    }
+}
+
+void add_having_source_cols(std::map<std::string, std::vector<TabCol>> &pushed_cols,
+                            const HavingTerm &term) {
+    if (term.is_agg) {
+        add_agg_source_col(pushed_cols, term.agg);
+    } else if (term.is_col) {
+        add_col(pushed_cols[term.col.tab_name], term.col);
+    }
+}
+
 std::string display_table(const std::map<std::string, std::string> &display_names, const std::string &tab_name) {
     auto it = display_names.find(tab_name);
     return it == display_names.end() ? tab_name : it->second;
@@ -441,6 +456,17 @@ bool keeps_all_table_cols(const std::vector<TabCol> &cols, const TabMeta &tab,
         }
     }
     return true;
+}
+
+std::vector<TabCol> aggregate_output_cols(const std::vector<SelectItem> &select_items,
+                                          const std::map<std::string, std::string> &display_names) {
+    std::vector<TabCol> cols;
+    cols.reserve(select_items.size());
+    for (const auto &item : select_items) {
+        cols.push_back({.tab_name = "", .col_name = item.output_name});
+    }
+    sort_cols_for_display(cols, display_names);
+    return cols;
 }
 
 bool is_subset(const std::set<std::string> &small, const std::set<std::string> &large) {
@@ -523,9 +549,25 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
             add_col(pushed_cols[cond.lhs_col.tab_name], cond.lhs_col);
             add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
         }
-        for (const auto &order_by : query->order_bys) {
-            TabCol order_col = resolve_query_col(order_by.col, query->tables, query->table_real_names, sm_manager_);
-            add_col(pushed_cols[order_col.tab_name], order_col);
+        if (query->has_aggregation) {
+            for (const auto &item : query->select_items) {
+                if (item.is_agg) {
+                    add_agg_source_col(pushed_cols, item.agg);
+                }
+            }
+            for (const auto &group_col : query->group_cols) {
+                add_col(pushed_cols[group_col.tab_name], group_col);
+            }
+            for (const auto &cond : query->having_conds) {
+                add_having_source_cols(pushed_cols, cond.lhs);
+                add_having_source_cols(pushed_cols, cond.rhs);
+            }
+        }
+        if (!query->has_aggregation) {
+            for (const auto &order_by : query->order_bys) {
+                TabCol order_col = resolve_query_col(order_by.col, query->tables, query->table_real_names, sm_manager_);
+                add_col(pushed_cols[order_col.tab_name], order_col);
+            }
         }
         for (auto &entry : pushed_cols) {
             sort_cols_for_display(entry.second, query->tab_display_names);
@@ -557,6 +599,15 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
     std::vector<std::string> join_order = query->tables;
     std::shared_ptr<Plan> root = build_join_plan_for_order(
         join_order, table_plans, join_conds, query->tab_display_names, true);
+    if (query->has_aggregation) {
+        root = std::make_shared<AggregatePlan>(T_Aggregate, std::move(root), query->select_items, query->group_cols,
+                                               query->having_conds, query->order_bys, query->has_limit,
+                                               query->limit);
+        return std::make_shared<ProjectionPlan>(T_Projection, std::move(root),
+                                                aggregate_output_cols(query->select_items,
+                                                                      query->tab_display_names),
+                                                false, query->tab_display_names);
+    }
     root = generate_sort_plan(query, std::move(root));
     if (query->has_limit) {
         root = std::make_shared<LimitPlan>(T_Limit, std::move(root), query->limit);

@@ -494,7 +494,7 @@ std::vector<std::string> choose_min_result_join_order(
     const std::vector<std::string> &tables, const std::vector<Condition> &join_conds,
     const std::map<std::string, std::shared_ptr<Plan>> &table_plans,
     const std::map<std::string, std::string> &display_names, SmManager *sm_manager, Context *context) {
-    if (tables.size() <= 2) {
+    if (tables.size() <= 2 || join_conds.empty()) {
         return tables;
     }
 

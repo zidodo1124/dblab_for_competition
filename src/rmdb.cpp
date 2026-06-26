@@ -96,6 +96,18 @@ std::optional<std::string> parse_show_index_sql(const std::string &sql) {
     return std::nullopt;
 }
 
+bool should_report_parse_failure(const char *sql) {
+    std::string s = sql == nullptr ? "" : sql;
+    auto begin = std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    });
+    if (begin == s.end()) {
+        return false;
+    }
+    std::string trimmed(begin, s.end());
+    return trimmed.rfind("--", 0) != 0;
+}
+
 void sigint_handler(int signo) {
     should_exit = true;
     log_manager->flush_log_to_disk();
@@ -226,6 +238,16 @@ void *client_handler(void *sock_fd) {
             if(finish_analyze == false) {
                 yy_delete_buffer(buf);
                 pthread_mutex_unlock(buffer_mutex);
+                if (should_report_parse_failure(data_recv)) {
+                    std::string str = "failure\n";
+                    memcpy(data_send, str.c_str(), str.length());
+                    data_send[str.length()] = '\0';
+                    offset = str.length();
+                    std::fstream outfile;
+                    outfile.open("output.txt", std::ios::out | std::ios::app);
+                    outfile << str;
+                    outfile.close();
+                }
             }
         }
         // future TODO: 格式化 sql_handler.result, 传给客户端

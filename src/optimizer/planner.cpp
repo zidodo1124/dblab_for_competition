@@ -15,6 +15,7 @@ See the Mulan PSL v2 for more details. */
 #include <map>
 #include <memory>
 #include <set>
+#include <tuple>
 
 #include "execution/executor_delete.h"
 #include "execution/executor_filter.h"
@@ -434,15 +435,26 @@ bool connects_joined_tables(const Condition &cond, const std::set<std::string> &
     return false;
 }
 
-std::vector<std::string> choose_connected_join_order(const std::vector<std::string> &tables,
-                                                     const std::vector<Condition> &join_conds) {
+std::vector<std::string> choose_connected_join_order(
+    const std::vector<std::string> &tables, const std::vector<Condition> &join_conds,
+    const std::map<std::string, std::string> &table_order_names) {
     if (tables.size() <= 2 || join_conds.empty()) {
         return tables;
     }
 
-    std::vector<std::string> order{tables.front()};
-    std::vector<std::string> remaining(tables.begin() + 1, tables.end());
-    std::set<std::string> joined{tables.front()};
+    auto table_less = [&](const std::string &lhs, const std::string &rhs) {
+        auto lhs_it = table_order_names.find(lhs);
+        auto rhs_it = table_order_names.find(rhs);
+        const std::string &lhs_name = lhs_it == table_order_names.end() ? lhs : lhs_it->second;
+        const std::string &rhs_name = rhs_it == table_order_names.end() ? rhs : rhs_it->second;
+        return std::tie(lhs_name, lhs) < std::tie(rhs_name, rhs);
+    };
+
+    std::vector<std::string> remaining = tables;
+    std::sort(remaining.begin(), remaining.end(), table_less);
+    std::vector<std::string> order{remaining.front()};
+    std::set<std::string> joined{remaining.front()};
+    remaining.erase(remaining.begin());
 
     while (!remaining.empty()) {
         size_t selected = 0;
@@ -463,6 +475,7 @@ std::vector<std::string> choose_connected_join_order(const std::vector<std::stri
         remaining.erase(remaining.begin() + selected);
         order.push_back(next_table);
         joined.insert(next_table);
+        std::sort(remaining.begin(), remaining.end(), table_less);
     }
 
     return order;
@@ -545,11 +558,13 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
     }
 
     std::map<std::string, std::shared_ptr<Plan>> table_plans;
+    std::map<std::string, std::string> table_order_names;
     for (const auto &tab_name : query->tables) {
         std::vector<std::string> index_cols;
         std::string real_table = query->table_real_names.count(tab_name) ? query->table_real_names.at(tab_name)
                                                                          : tab_name;
         std::string table_output_name = real_table_counts[real_table] > 1 ? tab_name : real_table;
+        table_order_names[tab_name] = table_output_name;
         std::shared_ptr<Plan> plan =
             std::make_shared<ScanPlan>(T_SeqScan, sm_manager_, real_table, std::vector<Condition>(), index_cols,
                                        tab_name, table_output_name);
@@ -566,7 +581,7 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         table_plans[tab_name] = std::move(plan);
     }
 
-    std::vector<std::string> join_order = choose_connected_join_order(query->tables, join_conds);
+    std::vector<std::string> join_order = choose_connected_join_order(query->tables, join_conds, table_order_names);
     std::shared_ptr<Plan> root = build_join_plan_for_order(
         join_order, table_plans, join_conds, query->tab_display_names, true);
 

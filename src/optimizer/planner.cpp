@@ -478,6 +478,14 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
             add_col(pushed_cols[cond.lhs_col.tab_name], cond.lhs_col);
             add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
         }
+        for (const auto &entry : local_conds) {
+            for (const auto &cond : entry.second) {
+                add_col(pushed_cols[cond.lhs_col.tab_name], cond.lhs_col);
+                if (!cond.is_rhs_val) {
+                    add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
+                }
+            }
+        }
         for (auto &entry : pushed_cols) {
             sort_cols_for_display(entry.second, query->tab_display_names);
         }
@@ -492,13 +500,13 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         std::shared_ptr<Plan> plan =
             std::make_shared<ScanPlan>(T_SeqScan, sm_manager_, real_table, std::vector<Condition>(), index_cols,
                                        tab_name, table_output_name);
-        if (!local_conds[tab_name].empty()) {
-            plan = std::make_shared<FilterPlan>(T_Filter, std::move(plan), local_conds[tab_name],
-                                                query->tab_display_names);
-        }
         if (push_project && !pushed_cols[tab_name].empty()) {
             plan = std::make_shared<ProjectionPlan>(T_Projection, std::move(plan), pushed_cols[tab_name], false,
                                                     query->tab_display_names);
+        }
+        if (!local_conds[tab_name].empty()) {
+            plan = std::make_shared<FilterPlan>(T_Filter, std::move(plan), local_conds[tab_name],
+                                                query->tab_display_names);
         }
         table_plans[tab_name] = std::move(plan);
     }

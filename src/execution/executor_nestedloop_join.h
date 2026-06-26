@@ -81,10 +81,8 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
             return;
         }
         right_->beginTuple();
-        if (right_->is_end()) {
-            isend = true;
-            return;
-        }
+        // Even when the inner side is empty after its own filters, keep
+        // advancing the outer side so EXPLAIN row counts include each inner run.
         advance_to_match();
     }
 

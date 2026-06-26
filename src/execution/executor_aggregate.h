@@ -4,7 +4,9 @@ RMDB is licensed under Mulan PSL v2. */
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -31,6 +33,7 @@ class AggregateExecutor : public AbstractExecutor {
 
     struct TermValue {
         ColType type = TYPE_INT;
+        bool is_null = false;
         int int_val = 0;
         float float_val = 0;
         std::string str_val;
@@ -171,14 +174,26 @@ class AggregateExecutor : public AbstractExecutor {
         if (call.type == AGG_COUNT) {
             val.int_val = static_cast<int>(state.count);
         } else if (call.type == AGG_AVG) {
-            val.float_val = state.count == 0 ? 0 : static_cast<float>(state.sum / state.count);
+            if (state.count == 0) {
+                val.is_null = true;
+            } else {
+                val.float_val = static_cast<float>(state.sum / state.count);
+            }
         } else if (call.type == AGG_SUM) {
+            if (state.count == 0) {
+                val.is_null = true;
+                return val;
+            }
             if (type == TYPE_INT) {
                 val.int_val = static_cast<int>(state.sum);
             } else {
                 val.float_val = static_cast<float>(state.sum);
             }
         } else {
+            if (!state.has_value) {
+                val.is_null = true;
+                return val;
+            }
             if (type == TYPE_INT) {
                 val.int_val = state.int_val;
             } else {
@@ -220,6 +235,9 @@ class AggregateExecutor : public AbstractExecutor {
     }
 
     bool compare_terms(TermValue lhs, CompOp op, TermValue rhs) const {
+        if (lhs.is_null || rhs.is_null) {
+            return false;
+        }
         int cmp = 0;
         if (lhs.type == TYPE_FLOAT || rhs.type == TYPE_FLOAT) {
             float l = lhs.type == TYPE_FLOAT ? lhs.float_val : static_cast<float>(lhs.int_val);
@@ -252,6 +270,14 @@ class AggregateExecutor : public AbstractExecutor {
     }
 
     void write_term(char *dest, ColType type, const TermValue &val) const {
+        if (val.is_null) {
+            if (type == TYPE_INT) {
+                *reinterpret_cast<int *>(dest) = std::numeric_limits<int>::min();
+            } else if (type == TYPE_FLOAT) {
+                *reinterpret_cast<float *>(dest) = std::numeric_limits<float>::quiet_NaN();
+            }
+            return;
+        }
         if (type == TYPE_INT) {
             int out = val.type == TYPE_FLOAT ? static_cast<int>(val.float_val) : val.int_val;
             *reinterpret_cast<int *>(dest) = out;
@@ -408,6 +434,24 @@ class AggregateExecutor : public AbstractExecutor {
             throw ColumnNotFoundError(target.col_name);
         }
         return *pos;
+    }
+
+    std::string format_record_value(const ColMeta &col, const char *rec_buf) const override {
+        if (col.type == TYPE_INT) {
+            int val = *reinterpret_cast<const int *>(rec_buf);
+            if (val == std::numeric_limits<int>::min()) {
+                return "NULL";
+            }
+            return std::to_string(val);
+        }
+        if (col.type == TYPE_FLOAT) {
+            float val = *reinterpret_cast<const float *>(rec_buf);
+            if (std::isnan(val)) {
+                return "NULL";
+            }
+            return std::to_string(val);
+        }
+        return AbstractExecutor::format_record_value(col, rec_buf);
     }
 
     Rid &rid() override { return _abstract_rid; }

@@ -226,6 +226,14 @@ void *client_handler(void *sock_fd) {
             if(finish_analyze == false) {
                 yy_delete_buffer(buf);
                 pthread_mutex_unlock(buffer_mutex);
+                std::string str = "failure\n";
+                memcpy(data_send, str.c_str(), str.length());
+                data_send[str.length()] = '\0';
+                offset = str.length();
+                std::fstream outfile;
+                outfile.open("output.txt", std::ios::out | std::ios::app);
+                outfile << str;
+                outfile.close();
             }
         }
         // future TODO: 格式化 sql_handler.result, 传给客户端

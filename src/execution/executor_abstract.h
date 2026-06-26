@@ -16,7 +16,9 @@ See the Mulan PSL v2 for more details. */
 #include "system/sm.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <set>
 #include <sstream>
@@ -42,6 +44,18 @@ class AbstractExecutor {
     virtual std::string explain(int depth = 0) const { return ""; }
 
     virtual std::vector<std::string> tables() const { return {}; }
+
+    virtual std::string format_record_value(const ColMeta &col, const char *rec_buf) const {
+        if (col.type == TYPE_INT) {
+            return std::to_string(*(int *)rec_buf);
+        }
+        if (col.type == TYPE_FLOAT) {
+            return std::to_string(*(float *)rec_buf);
+        }
+        std::string col_str((char *)rec_buf, col.len);
+        col_str.resize(strlen(col_str.c_str()));
+        return col_str;
+    }
 
     size_t rows() const { return rows_; }
 

@@ -102,4 +102,6 @@ class SortExecutor : public AbstractExecutor {
     ColMeta get_col_offset(const TabCol &target) override { return prev_->get_col_offset(target); }
 
     Rid &rid() override { return _abstract_rid; }
+
+    std::string explain(int depth = 0) const override { return prev_->explain(depth); }
 };

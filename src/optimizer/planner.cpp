@@ -398,6 +398,38 @@ void sort_cols_for_display(std::vector<TabCol> &cols, const std::map<std::string
     });
 }
 
+TabCol resolve_query_col(const TabCol &target, const std::vector<std::string> &tables,
+                         const std::map<std::string, std::string> &real_names, SmManager *sm_manager) {
+    if (!target.tab_name.empty()) {
+        auto real_it = real_names.find(target.tab_name);
+        const std::string &real_table = real_it == real_names.end() ? target.tab_name : real_it->second;
+        sm_manager->db_.get_table(real_table).get_col(target.col_name);
+        return target;
+    }
+
+    TabCol resolved;
+    bool found = false;
+    for (const auto &tab_name : tables) {
+        auto real_it = real_names.find(tab_name);
+        const std::string &real_table = real_it == real_names.end() ? tab_name : real_it->second;
+        const auto &tab = sm_manager->db_.get_table(real_table);
+        if (std::find_if(tab.cols.begin(), tab.cols.end(), [&](const ColMeta &col) {
+                return col.name == target.col_name;
+            }) == tab.cols.end()) {
+            continue;
+        }
+        if (found) {
+            throw AmbiguousColumnError(target.col_name);
+        }
+        resolved = {.tab_name = tab_name, .col_name = target.col_name};
+        found = true;
+    }
+    if (!found) {
+        throw ColumnNotFoundError(target.col_name);
+    }
+    return resolved;
+}
+
 bool keeps_all_table_cols(const std::vector<TabCol> &cols, const TabMeta &tab,
                           const std::string &logical_tab_name) {
     if (cols.size() != tab.cols.size()) {
@@ -539,6 +571,10 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
             add_col(pushed_cols[cond.lhs_col.tab_name], cond.lhs_col);
             add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
         }
+        for (const auto &order_by : query->order_bys) {
+            TabCol order_col = resolve_query_col(order_by.col, query->tables, query->table_real_names, sm_manager_);
+            add_col(pushed_cols[order_col.tab_name], order_col);
+        }
         for (auto &entry : pushed_cols) {
             sort_cols_for_display(entry.second, query->tab_display_names);
         }
@@ -569,6 +605,10 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
     std::vector<std::string> join_order = choose_connected_join_order(query->tables, join_conds);
     std::shared_ptr<Plan> root = build_join_plan_for_order(
         join_order, table_plans, join_conds, query->tab_display_names, true);
+    root = generate_sort_plan(query, std::move(root));
+    if (query->has_limit) {
+        root = std::make_shared<LimitPlan>(T_Limit, std::move(root), query->limit);
+    }
 
     auto root_cols = query->cols;
     if (!query->select_all) {

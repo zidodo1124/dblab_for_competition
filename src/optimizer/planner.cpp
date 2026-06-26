@@ -407,28 +407,6 @@ bool is_subset(const std::set<std::string> &small, const std::set<std::string> &
     return true;
 }
 
-Condition normalize_join_condition(const Condition &cond, const std::set<std::string> &left_tables,
-                                   const std::string &right_table) {
-    if (cond.is_rhs_val) {
-        return cond;
-    }
-
-    Condition normalized = cond;
-    bool lhs_on_left = left_tables.find(cond.lhs_col.tab_name) != left_tables.end();
-    bool rhs_on_left = left_tables.find(cond.rhs_col.tab_name) != left_tables.end();
-    bool lhs_on_right = cond.lhs_col.tab_name == right_table;
-    bool rhs_on_right = cond.rhs_col.tab_name == right_table;
-    if (!lhs_on_left && lhs_on_right && rhs_on_left && !rhs_on_right) {
-        static const std::map<CompOp, CompOp> swap_op = {
-            {OP_EQ, OP_EQ}, {OP_NE, OP_NE}, {OP_LT, OP_GT},
-            {OP_GT, OP_LT}, {OP_LE, OP_GE}, {OP_GE, OP_LE},
-        };
-        std::swap(normalized.lhs_col, normalized.rhs_col);
-        normalized.op = swap_op.at(normalized.op);
-    }
-    return normalized;
-}
-
 std::shared_ptr<Plan> build_join_plan_for_order(
     const std::vector<std::string> &join_order, const std::map<std::string, std::shared_ptr<Plan>> &table_plans,
     const std::vector<Condition> &join_conds, const std::map<std::string, std::string> &display_names,
@@ -448,7 +426,7 @@ std::shared_ptr<Plan> build_join_plan_for_order(
             }
             auto cond_tabs = condition_tables(join_conds[cond_idx]);
             if (is_subset(cond_tabs, new_joined) && cond_tabs.find(right_table) != cond_tabs.end()) {
-                curr_join_conds.push_back(normalize_join_condition(join_conds[cond_idx], joined, right_table));
+                curr_join_conds.push_back(join_conds[cond_idx]);
                 used_join_cond[cond_idx] = true;
             }
         }

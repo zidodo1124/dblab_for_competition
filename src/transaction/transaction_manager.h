@@ -11,7 +11,9 @@ See the Mulan PSL v2 for more details. */
 #pragma once
 
 #include <atomic>
+#include <set>
 #include <unordered_map>
+#include <unordered_set>
 #include <optional>
 #include <functional>
 #include <shared_mutex>
@@ -22,6 +24,8 @@ See the Mulan PSL v2 for more details. */
 #include "concurrency/lock_manager.h"
 #include "system/sm_manager.h"
 #include "common/exception.h"
+
+class Context;
 
 /* 系统采用的并发控制算法，当前题目中要求两阶段封锁并发控制算法 */
 enum class ConcurrencyMode { TWO_PHASE_LOCKING = 0, BASIC_TO, MVCC };
@@ -68,6 +72,24 @@ public:
     void set_concurrency_mode(ConcurrencyMode concurrency_mode) { concurrency_mode_ = concurrency_mode; }
 
     LockManager* get_lock_manager() { return lock_manager_; }
+
+    void append_insert_version(const std::string &tab_name, const Rid &rid, const RmRecord &record, Transaction *txn);
+    void append_update_version(const std::string &tab_name, const Rid &rid, const RmRecord &old_record,
+                               const RmRecord &new_record, Transaction *txn);
+    void append_delete_version(const std::string &tab_name, const Rid &rid, const RmRecord &old_record, Transaction *txn);
+
+    std::vector<std::pair<Rid, RmRecord>> get_visible_records(const std::string &tab_name, RmFileHandle *fh,
+                                                               Context *context);
+    std::unique_ptr<RmRecord> get_visible_record(const std::string &tab_name, const Rid &rid, RmFileHandle *fh,
+                                                  Context *context);
+    void check_write_conflict(const std::string &tab_name, const Rid &rid, Transaction *txn);
+    void check_insert_conflict(const std::string &tab_name, const RmRecord &record, Transaction *txn);
+    void record_select_predicate(const std::string &tab_name, const std::vector<Condition> &conds, Transaction *txn);
+    void record_select_record(const std::string &tab_name, const Rid &rid, Transaction *txn);
+    void check_ser_write(const std::string &tab_name, const Rid &rid, const RmRecord *old_record,
+                         const RmRecord *new_record, Transaction *txn);
+    void cleanup_abort(Transaction *txn);
+    std::unique_lock<std::mutex> acquire_write_latch() { return std::unique_lock<std::mutex>(write_latch_); }
 
     /**
      * @description: 获取事务ID为txn_id的事务对象
@@ -140,12 +162,53 @@ public:
 
 
 private:
+    struct Version {
+        Rid rid{};
+        RmRecord record;
+        txn_id_t txn_id{INVALID_TXN_ID};
+        timestamp_t commit_ts{INVALID_TS};
+        bool committed{false};
+        bool aborted{false};
+        bool deleted{false};
+        bool old_image{false};
+    };
+
+    struct PredicateRead {
+        std::string tab_name;
+        std::vector<Condition> conds;
+    };
+
+    struct TxnSerState {
+        std::set<std::pair<std::string, int64_t>> read_records;
+        std::vector<PredicateRead> predicates;
+        bool committed{false};
+        bool aborted{false};
+        timestamp_t commit_ts{INVALID_TS};
+    };
+
+    std::string version_key(const std::string &tab_name, const Rid &rid) const;
+    int64_t rid_key(const Rid &rid) const;
+    void ensure_base_version(const std::string &tab_name, const Rid &rid, RmFileHandle *fh, Context *context);
+    Version *latest_version(const std::string &tab_name, const Rid &rid);
+    Version *visible_version(const std::string &tab_name, const Rid &rid, Transaction *txn);
+    bool version_visible(const Version &version, Transaction *txn) const;
+    bool record_matches(const std::string &tab_name, const std::vector<Condition> &conds, const RmRecord &record);
+    bool add_rw_edge(txn_id_t reader, txn_id_t writer);
+    bool creates_rw_cycle(txn_id_t from, txn_id_t to);
+    bool txn_relevant_for_ser(txn_id_t txn_id, Transaction *current);
+
     ConcurrencyMode concurrency_mode_;      // 事务使用的并发控制算法，目前只需要考虑2PL
     std::atomic<txn_id_t> next_txn_id_{0};  // 用于分发事务ID
     std::atomic<timestamp_t> next_timestamp_{0};    // 用于分发事务时间戳
     std::mutex latch_;  // 用于txn_map的并发
     SmManager *sm_manager_;
     LockManager *lock_manager_;
+
+    std::mutex mvcc_latch_;
+    std::mutex write_latch_;
+    std::unordered_map<std::string, std::vector<Version>> versions_;
+    std::unordered_map<txn_id_t, TxnSerState> ser_states_;
+    std::unordered_map<txn_id_t, std::unordered_set<txn_id_t>> rw_edges_;
 
     std::atomic<timestamp_t> last_commit_ts_{0};    // 最后提交的时间戳,仅用于MVCC
     Watermark running_txns_{0};             // 存储所有正在运行事务的读取时间戳，以便于垃圾回收，仅用于MVCC

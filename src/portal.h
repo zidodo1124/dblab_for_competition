@@ -15,6 +15,7 @@ See the Mulan PSL v2 for more details. */
 #include <string>
 #include "optimizer/plan.h"
 #include "execution/executor_abstract.h"
+#include "execution/executor_filter.h"
 #include "execution/executor_nestedloop_join.h"
 #include "execution/executor_projection.h"
 #include "execution/executor_seq_scan.h"
@@ -28,6 +29,7 @@ See the Mulan PSL v2 for more details. */
 typedef enum portalTag{
     PORTAL_Invalid_Query = 0,
     PORTAL_ONE_SELECT,
+    PORTAL_EXPLAIN_ANALYZE,
     PORTAL_DML_WITHOUT_SELECT,
     PORTAL_MULTI_QUERY,
     PORTAL_CMD_UTILITY
@@ -63,6 +65,8 @@ class Portal
             return std::make_shared<PortalStmt>(PORTAL_CMD_UTILITY, std::vector<TabCol>(), std::unique_ptr<AbstractExecutor>(),plan);
         } else if(auto x = std::dynamic_pointer_cast<SetKnobPlan>(plan)) {
             return std::make_shared<PortalStmt>(PORTAL_CMD_UTILITY, std::vector<TabCol>(), std::unique_ptr<AbstractExecutor>(), plan); 
+        } else if(auto x = std::dynamic_pointer_cast<SetIsolationPlan>(plan)) {
+            return std::make_shared<PortalStmt>(PORTAL_CMD_UTILITY, std::vector<TabCol>(), std::unique_ptr<AbstractExecutor>(), plan);
         } else if (auto x = std::dynamic_pointer_cast<DDLPlan>(plan)) {
             return std::make_shared<PortalStmt>(PORTAL_MULTI_QUERY, std::vector<TabCol>(), std::unique_ptr<AbstractExecutor>(),plan);
         } else if (auto x = std::dynamic_pointer_cast<DMLPlan>(plan)) {
@@ -72,6 +76,12 @@ class Portal
                     std::shared_ptr<ProjectionPlan> p = std::dynamic_pointer_cast<ProjectionPlan>(x->subplan_);
                     std::unique_ptr<AbstractExecutor> root= convert_plan_executor(p, context);
                     return std::make_shared<PortalStmt>(PORTAL_ONE_SELECT, std::move(p->sel_cols_), std::move(root), plan);
+                }
+                case T_ExplainAnalyze:
+                {
+                    std::unique_ptr<AbstractExecutor> root = convert_plan_executor(x->subplan_, context);
+                    return std::make_shared<PortalStmt>(PORTAL_EXPLAIN_ANALYZE, std::vector<TabCol>(),
+                                                        std::move(root), plan);
                 }
                     
                 case T_Update:
@@ -126,6 +136,11 @@ class Portal
                 ql->select_from(std::move(portal->root), std::move(portal->sel_cols), context);
                 break;
             }
+            case PORTAL_EXPLAIN_ANALYZE:
+            {
+                ql->explain_analyze(std::move(portal->root), context);
+                break;
+            }
 
             case PORTAL_DML_WITHOUT_SELECT:
             {
@@ -156,21 +171,27 @@ class Portal
     std::unique_ptr<AbstractExecutor> convert_plan_executor(std::shared_ptr<Plan> plan, Context *context)
     {
         if(auto x = std::dynamic_pointer_cast<ProjectionPlan>(plan)){
-            return std::make_unique<ProjectionExecutor>(convert_plan_executor(x->subplan_, context), 
-                                                        x->sel_cols_);
+            return std::make_unique<ProjectionExecutor>(convert_plan_executor(x->subplan_, context),
+                                                        x->sel_cols_, x->display_all_,
+                                                        x->tab_display_names_);
+        } else if(auto x = std::dynamic_pointer_cast<FilterPlan>(plan)) {
+            return std::make_unique<FilterExecutor>(convert_plan_executor(x->subplan_, context),
+                                                   x->conds_, x->tab_display_names_);
         } else if(auto x = std::dynamic_pointer_cast<ScanPlan>(plan)) {
             if(x->tag == T_SeqScan) {
-                return std::make_unique<SeqScanExecutor>(sm_manager_, x->tab_name_, x->conds_, context);
+                return std::make_unique<SeqScanExecutor>(sm_manager_, x->tab_name_, x->conds_, context, false,
+                                                         x->logical_tab_name_, x->table_output_name_);
             }
             else {
-                return std::make_unique<IndexScanExecutor>(sm_manager_, x->tab_name_, x->conds_, x->index_col_names_, context);
-            } 
+                return std::make_unique<IndexScanExecutor>(sm_manager_, x->tab_name_, x->conds_, x->index_col_names_,
+                                                           context, x->logical_tab_name_);
+            }
         } else if(auto x = std::dynamic_pointer_cast<JoinPlan>(plan)) {
             std::unique_ptr<AbstractExecutor> left = convert_plan_executor(x->left_, context);
             std::unique_ptr<AbstractExecutor> right = convert_plan_executor(x->right_, context);
             std::unique_ptr<AbstractExecutor> join = std::make_unique<NestedLoopJoinExecutor>(
-                                std::move(left), 
-                                std::move(right), std::move(x->conds_));
+                                std::move(left),
+                                std::move(right), std::move(x->conds_), x->tab_display_names_);
             return join;
         } else if(auto x = std::dynamic_pointer_cast<SortPlan>(plan)) {
             return std::make_unique<SortExecutor>(convert_plan_executor(x->subplan_, context), 

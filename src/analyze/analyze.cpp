@@ -10,6 +10,8 @@ See the Mulan PSL v2 for more details. */
 
 #include "analyze.h"
 
+#include <algorithm>
+
 /**
  * @description: 分析器，进行语义分析和查询重写，需要检查不符合语义规定的部分
  * @param {shared_ptr<ast::TreeNode>} parse parser生成的结果集
@@ -22,13 +24,38 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
     {
         // 处理表名
         query->tables = std::move(x->tabs);
+        query->is_explain_analyze = x->is_explain_analyze;
+        query->select_all = x->select_all;
+        query->tab_display_names = x->tab_display_names;
+        query->table_real_names = x->tab_real_names;
         for (const auto &tab_name : query->tables) {
-            sm_manager_->db_.get_table(tab_name);
+            if (query->table_real_names.find(tab_name) == query->table_real_names.end()) {
+                query->table_real_names[tab_name] = tab_name;
+            }
+            sm_manager_->db_.get_table(query->table_real_names.at(tab_name));
+            if (query->tab_display_names.find(tab_name) == query->tab_display_names.end()) {
+                query->tab_display_names[tab_name] = tab_name;
+            }
         }
+        auto resolve_table_alias = [&](std::string &tab_name) {
+            if (tab_name.empty()) {
+                return;
+            }
+            if (std::find(query->tables.begin(), query->tables.end(), tab_name) != query->tables.end()) {
+                return;
+            }
+            for (const auto &entry : query->tab_display_names) {
+                if (entry.second == tab_name) {
+                    tab_name = entry.first;
+                    return;
+                }
+            }
+        };
 
         // 处理target list，再target list中添加上表名，例如 a.id
         for (auto &sv_sel_col : x->cols) {
             TabCol sel_col = {.tab_name = sv_sel_col->tab_name, .col_name = sv_sel_col->col_name};
+            resolve_table_alias(sel_col.tab_name);
             query->cols.push_back(sel_col);
         }
         
@@ -48,6 +75,15 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
         }
         //处理where条件
         get_clause(x->conds, query->conds);
+        for (auto &cond : query->conds) {
+            resolve_table_alias(cond.lhs_col.tab_name);
+            if (!cond.is_rhs_val) {
+                resolve_table_alias(cond.rhs_col.tab_name);
+            }
+        }
+        if (x->has_sort && x->order != nullptr && x->order->cols != nullptr) {
+            resolve_table_alias(x->order->cols->tab_name);
+        }
         check_clause(query->tables, query->conds);
     } else if (auto x = std::dynamic_pointer_cast<ast::UpdateStmt>(parse)) {
         TabMeta &tab = sm_manager_->db_.get_table(x->tab_name);
@@ -57,7 +93,23 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
             SetClause set_clause;
             set_clause.lhs = check_column(all_cols, {.tab_name = x->tab_name, .col_name = sv_set_clause->col_name});
             set_clause.rhs = convert_sv_value(sv_set_clause->val);
+            set_clause.is_self_add = sv_set_clause->is_self_add;
             auto target_col = tab.get_col(set_clause.lhs.col_name);
+            if (set_clause.is_self_add) {
+                if (sv_set_clause->rhs_col_name != sv_set_clause->col_name) {
+                    throw RMDBError("Only self-referenced update is supported");
+                }
+                if (set_clause.rhs.type == TYPE_INT) {
+                    set_clause.add_int = set_clause.rhs.int_val;
+                    set_clause.add_float = static_cast<float>(set_clause.rhs.int_val);
+                    set_clause.add_is_float = false;
+                } else if (set_clause.rhs.type == TYPE_FLOAT) {
+                    set_clause.add_float = set_clause.rhs.float_val;
+                    set_clause.add_is_float = true;
+                } else {
+                    throw IncompatibleTypeError(coltype2str(target_col->type), coltype2str(set_clause.rhs.type));
+                }
+            }
             if (target_col->type == TYPE_FLOAT && set_clause.rhs.type == TYPE_INT) {
                 set_clause.rhs.set_float(static_cast<float>(set_clause.rhs.int_val));
             }
@@ -118,8 +170,13 @@ TabCol Analyze::check_column(const std::vector<ColMeta> &all_cols, TabCol target
 void Analyze::get_all_cols(const std::vector<std::string> &tab_names, std::vector<ColMeta> &all_cols) {
     for (auto &sel_tab_name : tab_names) {
         // 这里db_不能写成get_db(), 注意要传指针
-        const auto &sel_tab_cols = sm_manager_->db_.get_table(sel_tab_name).cols;
-        all_cols.insert(all_cols.end(), sel_tab_cols.begin(), sel_tab_cols.end());
+        auto real_it = ast::pending_tab_real_names.find(sel_tab_name);
+        const auto &real_name = real_it == ast::pending_tab_real_names.end() ? sel_tab_name : real_it->second;
+        auto sel_tab_cols = sm_manager_->db_.get_table(real_name).cols;
+        for (auto &col : sel_tab_cols) {
+            col.tab_name = sel_tab_name;
+            all_cols.push_back(col);
+        }
     }
 }
 
@@ -151,7 +208,10 @@ void Analyze::check_clause(const std::vector<std::string> &tab_names, std::vecto
         if (!cond.is_rhs_val) {
             cond.rhs_col = check_column(all_cols, cond.rhs_col);
         }
-        TabMeta &lhs_tab = sm_manager_->db_.get_table(cond.lhs_col.tab_name);
+        auto lhs_real_it = ast::pending_tab_real_names.find(cond.lhs_col.tab_name);
+        const auto &lhs_real_tab_name =
+            lhs_real_it == ast::pending_tab_real_names.end() ? cond.lhs_col.tab_name : lhs_real_it->second;
+        TabMeta &lhs_tab = sm_manager_->db_.get_table(lhs_real_tab_name);
         auto lhs_col = lhs_tab.get_col(cond.lhs_col.col_name);
         ColType lhs_type = lhs_col->type;
         ColType rhs_type;
@@ -162,7 +222,10 @@ void Analyze::check_clause(const std::vector<std::string> &tab_names, std::vecto
             cond.rhs_val.init_raw(lhs_col->len);
             rhs_type = cond.rhs_val.type;
         } else {
-            TabMeta &rhs_tab = sm_manager_->db_.get_table(cond.rhs_col.tab_name);
+            auto rhs_real_it = ast::pending_tab_real_names.find(cond.rhs_col.tab_name);
+            const auto &rhs_real_tab_name =
+                rhs_real_it == ast::pending_tab_real_names.end() ? cond.rhs_col.tab_name : rhs_real_it->second;
+            TabMeta &rhs_tab = sm_manager_->db_.get_table(rhs_real_tab_name);
             auto rhs_col = rhs_tab.get_col(cond.rhs_col.col_name);
             rhs_type = rhs_col->type;
         }

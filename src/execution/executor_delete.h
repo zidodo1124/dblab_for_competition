@@ -37,8 +37,21 @@ class DeleteExecutor : public AbstractExecutor {
     }
 
     std::unique_ptr<RmRecord> Next() override {
+        auto write_guard = context_->txn_mgr_ != nullptr ? context_->txn_mgr_->acquire_write_latch()
+                                                         : std::unique_lock<std::mutex>();
         for (auto &rid : rids_) {
-            auto rec = fh_->get_record(rid, context_);
+            if (context_->txn_mgr_ != nullptr) {
+                context_->txn_mgr_->check_write_conflict(tab_name_, rid, context_->txn_);
+            }
+            auto rec = context_->txn_mgr_ != nullptr
+                           ? context_->txn_mgr_->get_visible_record(tab_name_, rid, fh_, context_)
+                           : fh_->get_record(rid, context_);
+            if (rec == nullptr) {
+                continue;
+            }
+            if (context_->txn_mgr_ != nullptr) {
+                context_->txn_mgr_->check_ser_write(tab_name_, rid, rec.get(), nullptr, context_->txn_);
+            }
             for (auto &index : tab_.indexes) {
                 auto ih = sm_manager_->ihs_.at(sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols)).get();
                 std::vector<char> key(index.col_tot_len);
@@ -50,6 +63,12 @@ class DeleteExecutor : public AbstractExecutor {
                 ih->delete_entry(key.data(), context_->txn_);
             }
             fh_->delete_record(rid, context_);
+            if (context_->txn_ != nullptr) {
+                if (context_->txn_mgr_ != nullptr) {
+                    context_->txn_mgr_->append_delete_version(tab_name_, rid, *rec, context_->txn_);
+                }
+                context_->txn_->append_write_record(new WriteRecord(WType::DELETE_TUPLE, tab_name_, rid, *rec));
+            }
         }
         return nullptr;
     }

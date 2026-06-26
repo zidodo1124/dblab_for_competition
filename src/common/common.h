@@ -13,6 +13,7 @@ See the Mulan PSL v2 for more details. */
 #include <cassert>
 #include <cstring>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 #include "defs.h"
@@ -35,22 +36,35 @@ struct Value {
         float float_val;  // float value
     };
     std::string str_val;  // string value
+    std::string display_val;
 
     std::shared_ptr<RmRecord> raw;  // raw record buffer
 
     void set_int(int int_val_) {
         type = TYPE_INT;
         int_val = int_val_;
+        display_val = std::to_string(int_val_);
     }
 
     void set_float(float float_val_) {
         type = TYPE_FLOAT;
         float_val = float_val_;
+        if (display_val.empty()) {
+            std::ostringstream os;
+            os << float_val_;
+            display_val = os.str();
+            if (display_val.find('.') == std::string::npos &&
+                display_val.find('e') == std::string::npos &&
+                display_val.find('E') == std::string::npos) {
+                display_val += ".0";
+            }
+        }
     }
 
     void set_str(std::string str_val_) {
         type = TYPE_STRING;
         str_val = std::move(str_val_);
+        display_val = "'" + str_val + "'";
     }
 
     void init_raw(int len) {
@@ -85,4 +99,8 @@ struct Condition {
 struct SetClause {
     TabCol lhs;
     Value rhs;
+    bool is_self_add = false;
+    int add_int = 0;
+    float add_float = 0;
+    bool add_is_float = false;
 };

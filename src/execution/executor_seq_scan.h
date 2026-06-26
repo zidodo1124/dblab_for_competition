@@ -20,6 +20,8 @@ See the Mulan PSL v2 for more details. */
 class SeqScanExecutor : public AbstractExecutor {
    private:
     std::string tab_name_;              // 表的名称
+    std::string logical_tab_name_;
+    std::string table_output_name_;
     std::vector<Condition> conds_;      // scan的条件
     RmFileHandle *fh_;                  // 表的数据文件句柄
     std::vector<ColMeta> cols_;         // scan后生成的记录的字段
@@ -27,57 +29,95 @@ class SeqScanExecutor : public AbstractExecutor {
     std::vector<Condition> fed_conds_;  // 同conds_，两个字段相同
 
     Rid rid_;
-    std::unique_ptr<RecScan> scan_;     // table_iterator
+    std::vector<std::pair<Rid, RmRecord>> visible_records_;
+    size_t cursor_ = 0;
 
     SmManager *sm_manager_;
+    bool count_filtered_rows_;
 
    public:
-    SeqScanExecutor(SmManager *sm_manager, std::string tab_name, std::vector<Condition> conds, Context *context) {
+    SeqScanExecutor(SmManager *sm_manager, std::string tab_name, std::vector<Condition> conds, Context *context,
+                    bool count_filtered_rows = false, std::string logical_tab_name = "",
+                    std::string table_output_name = "") {
         sm_manager_ = sm_manager;
         tab_name_ = std::move(tab_name);
+        logical_tab_name_ = logical_tab_name.empty() ? tab_name_ : std::move(logical_tab_name);
+        table_output_name_ = table_output_name.empty() ? tab_name_ : std::move(table_output_name);
         conds_ = std::move(conds);
         TabMeta &tab = sm_manager_->db_.get_table(tab_name_);
         fh_ = sm_manager_->fhs_.at(tab_name_).get();
         cols_ = tab.cols;
+        for (auto &col : cols_) {
+            col.tab_name = logical_tab_name_;
+        }
         len_ = cols_.back().offset + cols_.back().len;
 
         context_ = context;
 
         fed_conds_ = conds_;
+        count_filtered_rows_ = count_filtered_rows;
     }
 
     void beginTuple() override {
-        scan_ = std::make_unique<RmScan>(fh_);
-        while (!scan_->is_end()) {
-            rid_ = scan_->rid();
-            auto rec = fh_->get_record(rid_, context_);
-            if (eval_conds(cols_, fed_conds_, rec.get())) {
+        visible_records_.clear();
+        cursor_ = 0;
+        if (context_->txn_mgr_ != nullptr) {
+            visible_records_ = context_->txn_mgr_->get_visible_records(tab_name_, fh_, context_);
+        } else {
+            for (RmScan scan(fh_); !scan.is_end(); scan.next()) {
+                auto rec = fh_->get_record(scan.rid(), context_);
+                visible_records_.emplace_back(scan.rid(), *rec);
+            }
+        }
+        if (context_->is_select_ && context_->txn_mgr_ != nullptr) {
+            context_->txn_mgr_->record_select_predicate(tab_name_, fed_conds_, context_->txn_);
+        }
+        while (cursor_ < visible_records_.size()) {
+            if (!count_filtered_rows_) {
+                rows_++;
+            }
+            rid_ = visible_records_[cursor_].first;
+            if (eval_conds(cols_, fed_conds_, &visible_records_[cursor_].second)) {
+                if (count_filtered_rows_) {
+                    rows_++;
+                }
                 return;
             }
-            scan_->next();
+            cursor_++;
         }
     }
 
     void nextTuple() override {
-        if (scan_ == nullptr || scan_->is_end()) {
+        if (cursor_ >= visible_records_.size()) {
             return;
         }
-        scan_->next();
-        while (!scan_->is_end()) {
-            rid_ = scan_->rid();
-            auto rec = fh_->get_record(rid_, context_);
-            if (eval_conds(cols_, fed_conds_, rec.get())) {
+        cursor_++;
+        while (cursor_ < visible_records_.size()) {
+            if (!count_filtered_rows_) {
+                rows_++;
+            }
+            rid_ = visible_records_[cursor_].first;
+            if (eval_conds(cols_, fed_conds_, &visible_records_[cursor_].second)) {
+                if (count_filtered_rows_) {
+                    rows_++;
+                }
                 return;
             }
-            scan_->next();
+            cursor_++;
         }
     }
 
     std::unique_ptr<RmRecord> Next() override {
-        return fh_->get_record(rid_, context_);
+        if (cursor_ >= visible_records_.size()) {
+            return nullptr;
+        }
+        if (context_->is_select_ && context_->txn_mgr_ != nullptr) {
+            context_->txn_mgr_->record_select_record(tab_name_, rid_, context_->txn_);
+        }
+        return std::make_unique<RmRecord>(visible_records_[cursor_].second);
     }
 
-    bool is_end() const override { return scan_ == nullptr || scan_->is_end(); }
+    bool is_end() const override { return cursor_ >= visible_records_.size(); }
 
     size_t tupleLen() const override { return len_; }
 
@@ -86,4 +126,12 @@ class SeqScanExecutor : public AbstractExecutor {
     ColMeta get_col_offset(const TabCol &target) override { return *get_col(cols_, target); }
 
     Rid &rid() override { return rid_; }
+
+    std::vector<std::string> tables() const override { return {table_output_name_}; }
+
+    std::string explain(int depth = 0) const override {
+        std::ostringstream os;
+        os << indent(depth) << "Scan(table=" << tab_name_ << ", type=SeqScan, rows=" << rows_ << ")\n";
+        return os.str();
+    }
 };

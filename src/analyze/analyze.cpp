@@ -18,11 +18,11 @@ namespace {
 std::string default_agg_name(AggType type, const TabCol &col, bool is_star) {
     std::string func;
     switch (type) {
-        case AGG_COUNT: func = "COUNT"; break;
-        case AGG_MAX: func = "MAX"; break;
-        case AGG_MIN: func = "MIN"; break;
-        case AGG_SUM: func = "SUM"; break;
-        case AGG_AVG: func = "AVG"; break;
+        case AGG_COUNT: func = "count"; break;
+        case AGG_MAX: func = "max"; break;
+        case AGG_MIN: func = "min"; break;
+        case AGG_SUM: func = "sum"; break;
+        case AGG_AVG: func = "avg"; break;
     }
     return func + "(" + (is_star ? "*" : col.col_name) + ")";
 }

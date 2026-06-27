@@ -267,6 +267,7 @@ struct JoinExpr : public TreeNode {
 };
 
 extern bool pending_is_explain_analyze;
+extern bool pending_has_explicit_join;
 extern std::map<std::string, std::string> pending_tab_display_names;
 extern std::map<std::string, std::string> pending_tab_real_names;
 extern std::vector<std::string> pending_join_cond_right_tables;
@@ -280,6 +281,7 @@ struct SelectStmt : public TreeNode {
     std::vector<std::shared_ptr<HavingExpr>> having_conds;
     std::vector<std::shared_ptr<JoinExpr>> jointree;
     bool is_explain_analyze = false;
+    bool has_explicit_join = false;
     bool select_all = false;
     bool has_agg = false;
     std::map<std::string, std::string> tab_display_names;
@@ -316,6 +318,7 @@ struct SelectStmt : public TreeNode {
                 has_sort = !order_items.empty();
                 order = has_sort ? order_items.front() : nullptr;
                 is_explain_analyze = pending_is_explain_analyze;
+                has_explicit_join = pending_has_explicit_join;
                 tab_display_names = pending_tab_display_names;
                 tab_real_names = pending_tab_real_names;
                 join_cond_right_tables = pending_join_cond_right_tables;

@@ -34,6 +34,7 @@ namespace parser_support {
 struct NormalizedSelectSql {
     std::string sql;
     bool is_explain_analyze = false;
+    bool has_explicit_join = false;
     std::map<std::string, std::string> tab_display_names;
     std::map<std::string, std::string> tab_real_names;
     std::vector<std::string> join_cond_right_tables;
@@ -299,6 +300,7 @@ inline std::optional<NormalizedSelectSql> normalize_select_sql(const std::string
                 return std::nullopt;
             }
         } else if (low == "join") {
+            result.has_explicit_join = true;
             ++i;
             std::string right_visible;
             if (!parse_table_ref(i, &right_visible)) {
@@ -402,6 +404,7 @@ inline std::optional<NormalizedSelectSql> normalize_select_sql(const std::string
 
 inline YY_BUFFER_STATE scan_string(const char *str) {
     ast::pending_is_explain_analyze = false;
+    ast::pending_has_explicit_join = false;
     ast::pending_tab_display_names.clear();
     ast::pending_tab_real_names.clear();
     ast::pending_join_cond_right_tables.clear();
@@ -409,6 +412,7 @@ inline YY_BUFFER_STATE scan_string(const char *str) {
     auto normalized_select = normalize_select_sql(str == nullptr ? std::string() : std::string(str));
     if (normalized_select.has_value()) {
         ast::pending_is_explain_analyze = normalized_select->is_explain_analyze;
+        ast::pending_has_explicit_join = normalized_select->has_explicit_join;
         ast::pending_tab_display_names = normalized_select->tab_display_names;
         ast::pending_tab_real_names = normalized_select->tab_real_names;
         ast::pending_join_cond_right_tables = normalized_select->join_cond_right_tables;

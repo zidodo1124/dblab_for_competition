@@ -40,6 +40,7 @@ class Query{
     std::vector<std::string> tables;
     std::map<std::string, std::string> table_real_names;
     std::vector<std::string> join_cond_right_tables;
+    bool has_explicit_join = false;
     bool is_explain_analyze = false;
     bool select_all = false;
     std::map<std::string, std::string> tab_display_names;

@@ -478,6 +478,43 @@ bool is_subset(const std::set<std::string> &small, const std::set<std::string> &
     return true;
 }
 
+bool connects_joined_tables(const Condition &cond, const std::set<std::string> &joined,
+                            const std::string &candidate) {
+    auto tabs = condition_tables(cond);
+    return tabs.find(candidate) != tabs.end() &&
+           std::any_of(tabs.begin(), tabs.end(), [&](const std::string &tab) {
+               return joined.find(tab) != joined.end();
+           });
+}
+
+std::vector<std::string> choose_connected_join_order(const std::vector<std::string> &tables,
+                                                     const std::vector<Condition> &join_conds) {
+    if (tables.size() <= 2 || join_conds.empty()) {
+        return tables;
+    }
+
+    std::vector<std::string> order{tables.front()};
+    std::vector<std::string> remaining(tables.begin() + 1, tables.end());
+    std::set<std::string> joined{tables.front()};
+
+    while (!remaining.empty()) {
+        auto selected = remaining.begin();
+        for (auto it = remaining.begin(); it != remaining.end(); ++it) {
+            if (std::any_of(join_conds.begin(), join_conds.end(), [&](const Condition &cond) {
+                    return connects_joined_tables(cond, joined, *it);
+                })) {
+                selected = it;
+                break;
+            }
+        }
+        joined.insert(*selected);
+        order.push_back(*selected);
+        remaining.erase(selected);
+    }
+
+    return order;
+}
+
 std::shared_ptr<Plan> build_join_plan_for_order(
     const std::vector<std::string> &join_order, const std::map<std::string, std::shared_ptr<Plan>> &table_plans,
     const std::vector<Condition> &join_conds, const std::map<std::string, std::string> &display_names,
@@ -610,7 +647,9 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         table_plans[tab_name] = std::move(plan);
     }
 
-    std::vector<std::string> join_order = query->tables;
+    std::vector<std::string> join_order = !query->has_explicit_join
+                                              ? choose_connected_join_order(query->tables, join_conds)
+                                              : query->tables;
     std::shared_ptr<Plan> root = build_join_plan_for_order(
         join_order, table_plans, join_conds, query->tab_display_names, join_cond_right_tables, true);
     if (query->has_aggregation) {

@@ -56,6 +56,7 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
         query->tab_display_names = x->tab_display_names;
         query->table_real_names = x->tab_real_names;
         query->join_cond_right_tables = x->join_cond_right_tables;
+        query->has_explicit_join = x->has_explicit_join;
         query->has_aggregation = x->has_agg || !x->group_cols.empty() || !x->having_conds.empty();
         query->has_limit = x->has_limit;
         query->limit = x->limit;

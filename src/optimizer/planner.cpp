@@ -590,8 +590,10 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         if (push_project && !pushed_cols[tab_name].empty()) {
             bool display_all = keeps_all_table_cols(pushed_cols[tab_name], sm_manager_->db_.get_table(real_table),
                                                     tab_name);
-            plan = std::make_shared<ProjectionPlan>(T_Projection, std::move(plan), pushed_cols[tab_name],
-                                                    display_all, query->tab_display_names);
+            if (!display_all) {
+                plan = std::make_shared<ProjectionPlan>(T_Projection, std::move(plan), pushed_cols[tab_name],
+                                                        false, query->tab_display_names);
+            }
         }
         table_plans[tab_name] = std::move(plan);
     }

@@ -15,5 +15,6 @@ std::shared_ptr<TreeNode> parse_tree;
 bool pending_is_explain_analyze = false;
 std::map<std::string, std::string> pending_tab_display_names;
 std::map<std::string, std::string> pending_tab_real_names;
+std::vector<std::string> pending_join_cond_right_tables;
 
 }

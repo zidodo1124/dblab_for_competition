@@ -481,7 +481,7 @@ bool is_subset(const std::set<std::string> &small, const std::set<std::string> &
 std::shared_ptr<Plan> build_join_plan_for_order(
     const std::vector<std::string> &join_order, const std::map<std::string, std::shared_ptr<Plan>> &table_plans,
     const std::vector<Condition> &join_conds, const std::map<std::string, std::string> &display_names,
-    bool append_unused_conds) {
+    const std::vector<std::string> &join_cond_right_tables, bool append_unused_conds) {
     std::shared_ptr<Plan> root = table_plans.at(join_order[0]);
     std::set<std::string> joined{join_order[0]};
     std::vector<bool> used_join_cond(join_conds.size(), false);
@@ -496,7 +496,15 @@ std::shared_ptr<Plan> build_join_plan_for_order(
                 continue;
             }
             auto cond_tabs = condition_tables(join_conds[cond_idx]);
-            if (is_subset(cond_tabs, new_joined) && cond_tabs.find(right_table) != cond_tabs.end()) {
+            std::string owner_table =
+                cond_idx < join_cond_right_tables.size() ? join_cond_right_tables[cond_idx] : std::string();
+            bool can_attach = false;
+            if (!owner_table.empty()) {
+                can_attach = owner_table == right_table && is_subset(cond_tabs, new_joined);
+            } else {
+                can_attach = is_subset(cond_tabs, new_joined) && cond_tabs.find(right_table) != cond_tabs.end();
+            }
+            if (can_attach) {
                 curr_join_conds.push_back(join_conds[cond_idx]);
                 used_join_cond[cond_idx] = true;
             }
@@ -522,6 +530,7 @@ std::shared_ptr<Plan> build_join_plan_for_order(
 std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Query> query, Context *context) {
     std::map<std::string, std::vector<Condition>> local_conds;
     std::vector<Condition> join_conds;
+    std::vector<std::string> join_cond_right_tables;
     std::map<std::string, int> real_table_counts;
 
     for (const auto &tab_name : query->tables) {
@@ -530,12 +539,17 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         real_table_counts[real_table]++;
     }
 
-    for (const auto &cond : query->conds) {
+    for (size_t cond_idx = 0; cond_idx < query->conds.size(); ++cond_idx) {
+        const auto &cond = query->conds[cond_idx];
         auto tables = condition_tables(cond);
         if (tables.size() == 1) {
             local_conds[*tables.begin()].push_back(cond);
         } else {
             join_conds.push_back(cond);
+            join_cond_right_tables.push_back(
+                cond_idx < query->join_cond_right_tables.size()
+                    ? query->join_cond_right_tables[cond_idx]
+                    : std::string());
         }
     }
 
@@ -600,7 +614,7 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
 
     std::vector<std::string> join_order = query->tables;
     std::shared_ptr<Plan> root = build_join_plan_for_order(
-        join_order, table_plans, join_conds, query->tab_display_names, true);
+        join_order, table_plans, join_conds, query->tab_display_names, join_cond_right_tables, true);
     if (query->has_aggregation) {
         root = std::make_shared<AggregatePlan>(T_Aggregate, std::move(root), query->select_items, query->group_cols,
                                                query->having_conds, query->order_bys, query->has_limit,

@@ -36,6 +36,7 @@ struct NormalizedSelectSql {
     bool is_explain_analyze = false;
     std::map<std::string, std::string> tab_display_names;
     std::map<std::string, std::string> tab_real_names;
+    std::vector<std::string> join_cond_right_tables;
 };
 
 inline std::string lower_sql(std::string s) {
@@ -156,6 +157,20 @@ inline std::vector<std::string> rewrite_alias_tokens(
     return tokens;
 }
 
+inline std::vector<std::vector<std::string>> split_condition_tokens(const std::vector<std::string> &tokens) {
+    std::vector<std::vector<std::string>> result;
+    size_t begin = 0;
+    for (size_t i = 0; i <= tokens.size(); ++i) {
+        if (i == tokens.size() || lower_sql(tokens[i]) == "and") {
+            if (begin < i) {
+                result.emplace_back(tokens.begin() + begin, tokens.begin() + i);
+            }
+            begin = i + 1;
+        }
+    }
+    return result;
+}
+
 inline std::optional<NormalizedSelectSql> normalize_select_sql(const std::string &sql) {
     auto tokens = tokenize_sql(sql);
     while (!tokens.empty() && tokens.back() == ";") {
@@ -219,6 +234,7 @@ inline std::optional<NormalizedSelectSql> normalize_select_sql(const std::string
     std::vector<std::string> tables;
     std::map<std::string, std::string> alias_to_visible;
     std::vector<std::vector<std::string>> on_conds;
+    std::vector<std::string> on_cond_right_tables;
 
     auto add_table = [&](const std::string &table, const std::string &alias) {
         std::string visible = alias.empty() ? table : alias;
@@ -229,7 +245,7 @@ inline std::optional<NormalizedSelectSql> normalize_select_sql(const std::string
         result.tab_real_names[visible] = table;
     };
 
-    auto parse_table_ref = [&](size_t &i) -> bool {
+    auto parse_table_ref = [&](size_t &i, std::string *visible_out = nullptr) -> bool {
         if (i >= from_end || !is_identifier_token(tokens[i])) {
             return false;
         }
@@ -244,6 +260,9 @@ inline std::optional<NormalizedSelectSql> normalize_select_sql(const std::string
             alias = tokens[i++];
         }
         add_table(table, alias);
+        if (visible_out != nullptr) {
+            *visible_out = alias.empty() ? table : alias;
+        }
         return true;
     };
 
@@ -281,7 +300,8 @@ inline std::optional<NormalizedSelectSql> normalize_select_sql(const std::string
             }
         } else if (low == "join") {
             ++i;
-            if (!parse_table_ref(i)) {
+            std::string right_visible;
+            if (!parse_table_ref(i, &right_visible)) {
                 return std::nullopt;
             }
             if (i < from_end && lower_sql(tokens[i]) == "on") {
@@ -292,7 +312,11 @@ inline std::optional<NormalizedSelectSql> normalize_select_sql(const std::string
                 }
                 if (cond_begin < i) {
                     std::vector<std::string> cond(tokens.begin() + cond_begin, tokens.begin() + i);
-                    on_conds.push_back(std::move(cond));
+                    cond = rewrite_alias_tokens(std::move(cond), alias_to_visible);
+                    for (auto &part : split_condition_tokens(cond)) {
+                        on_conds.push_back(std::move(part));
+                        on_cond_right_tables.push_back(right_visible);
+                    }
                 }
             }
             if (i < from_end && tokens[i] == ",") {
@@ -308,8 +332,9 @@ inline std::optional<NormalizedSelectSql> normalize_select_sql(const std::string
     auto selector_tokens = rewrite_alias_tokens(
         std::vector<std::string>(tokens.begin() + select_pos + 1, tokens.begin() + from_pos), alias_to_visible);
     std::vector<std::vector<std::string>> all_conds;
-    for (auto &cond : on_conds) {
-        all_conds.push_back(rewrite_alias_tokens(std::move(cond), alias_to_visible));
+    for (size_t cond_idx = 0; cond_idx < on_conds.size(); ++cond_idx) {
+        all_conds.push_back(std::move(on_conds[cond_idx]));
+        result.join_cond_right_tables.push_back(on_cond_right_tables[cond_idx]);
     }
     if (where_pos != tokens.size()) {
         size_t where_end = std::min({group_pos, having_pos, order_pos, limit_pos, tokens.size()});
@@ -379,12 +404,14 @@ inline YY_BUFFER_STATE scan_string(const char *str) {
     ast::pending_is_explain_analyze = false;
     ast::pending_tab_display_names.clear();
     ast::pending_tab_real_names.clear();
+    ast::pending_join_cond_right_tables.clear();
 
     auto normalized_select = normalize_select_sql(str == nullptr ? std::string() : std::string(str));
     if (normalized_select.has_value()) {
         ast::pending_is_explain_analyze = normalized_select->is_explain_analyze;
         ast::pending_tab_display_names = normalized_select->tab_display_names;
         ast::pending_tab_real_names = normalized_select->tab_real_names;
+        ast::pending_join_cond_right_tables = normalized_select->join_cond_right_tables;
         return ::yy_scan_string(normalized_select->sql.c_str());
     }
     return ::yy_scan_string(str == nullptr ? "" : str);

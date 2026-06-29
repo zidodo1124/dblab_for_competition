@@ -498,11 +498,12 @@ std::shared_ptr<Plan> build_join_plan_for_order(
             auto cond_tabs = condition_tables(join_conds[cond_idx]);
             std::string owner_table =
                 cond_idx < join_cond_right_tables.size() ? join_cond_right_tables[cond_idx] : std::string();
+            bool natural_attach = is_subset(cond_tabs, new_joined) && cond_tabs.find(right_table) != cond_tabs.end();
             bool can_attach = false;
             if (!owner_table.empty()) {
-                can_attach = owner_table == right_table && is_subset(cond_tabs, new_joined);
+                can_attach = (owner_table == right_table && is_subset(cond_tabs, new_joined)) || natural_attach;
             } else {
-                can_attach = is_subset(cond_tabs, new_joined) && cond_tabs.find(right_table) != cond_tabs.end();
+                can_attach = natural_attach;
             }
             if (can_attach) {
                 curr_join_conds.push_back(join_conds[cond_idx]);
@@ -564,14 +565,6 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         for (const auto &cond : join_conds) {
             add_col(pushed_cols[cond.lhs_col.tab_name], cond.lhs_col);
             add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
-        }
-        for (const auto &entry : local_conds) {
-            for (const auto &cond : entry.second) {
-                add_col(pushed_cols[cond.lhs_col.tab_name], cond.lhs_col);
-                if (!cond.is_rhs_val) {
-                    add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
-                }
-            }
         }
         if (query->has_aggregation) {
             for (const auto &item : query->select_items) {

@@ -532,14 +532,6 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
     std::map<std::string, std::vector<Condition>> local_conds;
     std::vector<Condition> join_conds;
     std::vector<std::string> join_cond_right_tables;
-    std::map<std::string, int> real_table_counts;
-
-    for (const auto &tab_name : query->tables) {
-        std::string real_table = query->table_real_names.count(tab_name) ? query->table_real_names.at(tab_name)
-                                                                         : tab_name;
-        real_table_counts[real_table]++;
-    }
-
     size_t on_cond_idx = 0;
     for (size_t cond_idx = 0; cond_idx < query->conds.size(); ++cond_idx) {
         const auto &cond = query->conds[cond_idx];
@@ -596,10 +588,9 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         std::vector<std::string> index_cols;
         std::string real_table = query->table_real_names.count(tab_name) ? query->table_real_names.at(tab_name)
                                                                          : tab_name;
-        std::string table_output_name = real_table_counts[real_table] > 1 ? tab_name : real_table;
         std::shared_ptr<Plan> plan =
             std::make_shared<ScanPlan>(T_SeqScan, sm_manager_, real_table, std::vector<Condition>(), index_cols,
-                                       tab_name, table_output_name);
+                                       tab_name, real_table);
         if (!local_conds[tab_name].empty()) {
             plan = std::make_shared<FilterPlan>(T_Filter, std::move(plan), local_conds[tab_name],
                                                 query->tab_display_names);

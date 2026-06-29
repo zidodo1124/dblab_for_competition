@@ -565,6 +565,14 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
             add_col(pushed_cols[cond.lhs_col.tab_name], cond.lhs_col);
             add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
         }
+        for (const auto &entry : local_conds) {
+            for (const auto &cond : entry.second) {
+                add_col(pushed_cols[cond.lhs_col.tab_name], cond.lhs_col);
+                if (!cond.is_rhs_val) {
+                    add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
+                }
+            }
+        }
         if (query->has_aggregation) {
             for (const auto &item : query->select_items) {
                 if (item.is_agg) {
@@ -606,10 +614,8 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         if (push_project && !pushed_cols[tab_name].empty()) {
             bool display_all = keeps_all_table_cols(pushed_cols[tab_name], sm_manager_->db_.get_table(real_table),
                                                     tab_name);
-            if (!display_all) {
-                plan = std::make_shared<ProjectionPlan>(T_Projection, std::move(plan), pushed_cols[tab_name],
-                                                        false, query->tab_display_names);
-            }
+            plan = std::make_shared<ProjectionPlan>(T_Projection, std::move(plan), pushed_cols[tab_name],
+                                                    display_all, query->tab_display_names);
         }
         table_plans[tab_name] = std::move(plan);
     }

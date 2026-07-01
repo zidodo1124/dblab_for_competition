@@ -108,6 +108,12 @@ class UpdateExecutor : public AbstractExecutor {
             }
         }
 
+        if (context_->txn_mgr_ != nullptr && !tab_.indexes.empty()) {
+            for (auto &new_rec : new_recs) {
+                context_->txn_mgr_->check_insert_conflict(tab_name_, new_rec, context_->txn_);
+            }
+        }
+
         for (auto &index : tab_.indexes) {
             auto ih = sm_manager_->ihs_.at(sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols)).get();
             std::vector<std::vector<char>> new_keys;

@@ -29,6 +29,7 @@ typedef enum PlanTag{
     T_ShowIndex,
     T_DescTable,
     T_CreateTable,
+    T_CreateStaticCheckpoint,
     T_DropTable,
     T_CreateIndex,
     T_DropIndex,

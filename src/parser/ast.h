@@ -166,6 +166,9 @@ struct Col : public Expr {
             tab_name(std::move(tab_name_)), col_name(std::move(col_name_)) {}
 };
 
+struct CreateStaticCheckpoint : public TreeNode {
+};
+
 struct AggFunc : public Expr {
     AggType type;
     std::shared_ptr<Col> col;

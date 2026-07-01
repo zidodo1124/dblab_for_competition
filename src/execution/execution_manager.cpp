@@ -102,6 +102,13 @@ void QlManager::run_cmd_utility(std::shared_ptr<Plan> plan, txn_id_t *txn_id, Co
                 sm_manager_->desc_table(x->tab_name_, context);
                 break;
             }
+            case T_CreateStaticCheckpoint:
+            {
+                if (context->log_mgr_ != nullptr) {
+                    context->log_mgr_->create_static_checkpoint(sm_manager_->get_bpm(), sm_manager_);
+                }
+                break;
+            }
             case T_Transaction_begin:
             {
                 // 显示开启一个事务

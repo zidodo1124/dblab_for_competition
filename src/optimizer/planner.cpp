@@ -686,6 +686,8 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
             }
         }
         plannerRoot = std::make_shared<DDLPlan>(T_CreateTable, x->tab_name, std::vector<std::string>(), col_defs);
+    } else if (std::dynamic_pointer_cast<ast::CreateStaticCheckpoint>(query->parse)) {
+        plannerRoot = std::make_shared<OtherPlan>(T_CreateStaticCheckpoint, std::string());
     } else if (auto x = std::dynamic_pointer_cast<ast::DropTable>(query->parse)) {
         // drop table;
         plannerRoot = std::make_shared<DDLPlan>(T_DropTable, x->tab_name, std::vector<std::string>(), std::vector<ColDef>());

@@ -61,6 +61,10 @@ Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manage
         std::lock_guard<std::mutex> mvcc_lock(mvcc_latch_);
         ser_states_[txn->get_transaction_id()];
     }
+    if (log_manager != nullptr) {
+        BeginLogRecord log_record(txn->get_transaction_id());
+        log_manager->add_log_record(&log_record, txn);
+    }
     return txn;
 }
 
@@ -98,6 +102,8 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
         lock_manager_->unlock(txn, lock_data_id);
     }
     if (log_manager != nullptr) {
+        CommitLogRecord log_record(txn->get_transaction_id());
+        log_manager->add_log_record(&log_record, txn);
         log_manager->flush_log_to_disk();
     }
     txn->set_state(TransactionState::COMMITTED);
@@ -170,6 +176,8 @@ void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
         lock_manager_->unlock(txn, lock_data_id);
     }
     if (log_manager != nullptr) {
+        AbortLogRecord log_record(txn->get_transaction_id());
+        log_manager->add_log_record(&log_record, txn);
         log_manager->flush_log_to_disk();
     }
     txn->set_state(TransactionState::ABORTED);

@@ -52,6 +52,10 @@ class DeleteExecutor : public AbstractExecutor {
             if (context_->txn_mgr_ != nullptr) {
                 context_->txn_mgr_->check_ser_write(tab_name_, rid, rec.get(), nullptr, context_->txn_);
             }
+            if (context_->log_mgr_ != nullptr && context_->txn_ != nullptr) {
+                DeleteLogRecord log_record(context_->txn_->get_transaction_id(), *rec, rid, tab_name_);
+                context_->log_mgr_->add_log_record(&log_record, context_->txn_);
+            }
             for (auto &index : tab_.indexes) {
                 auto ih = sm_manager_->ihs_.at(sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols)).get();
                 std::vector<char> key(index.col_tot_len);

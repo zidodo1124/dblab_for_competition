@@ -58,6 +58,10 @@ Rid RmFileHandle::insert_record(char* buf, Context* context) {
  * @param {char*} buf 要插入记录的数据
  */
 void RmFileHandle::insert_record(const Rid& rid, char* buf) {
+    while (rid.page_no >= file_hdr_.num_pages) {
+        RmPageHandle new_page = create_new_page_handle();
+        buffer_pool_manager_->unpin_page(new_page.page->get_page_id(), true);
+    }
     RmPageHandle page_handle = fetch_page_handle(rid.page_no);
     if (rid.slot_no < 0 || rid.slot_no >= file_hdr_.num_records_per_page ||
         Bitmap::is_set(page_handle.bitmap, rid.slot_no)) {

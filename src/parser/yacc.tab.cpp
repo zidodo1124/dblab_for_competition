@@ -67,7 +67,7 @@
 
 
 /* First part of user prologue.  */
-#line 1 "/home/lx/rmdb/src/parser/yacc.y"
+#line 1 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
 
 #include "ast.h"
 #include "yacc.tab.h"
@@ -82,7 +82,7 @@ void yyerror(YYLTYPE *locp, const char* s) {
 
 using namespace ast;
 
-#line 86 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 86 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
 
 # ifndef YY_CAST
 #  ifdef __cplusplus
@@ -555,16 +555,16 @@ union yyalloc
 /* YYFINAL -- State number of the termination state.  */
 #define YYFINAL  54
 /* YYLAST -- Last index in YYTABLE.  */
-#define YYLAST   224
+#define YYLAST   229
 
 /* YYNTOKENS -- Number of terminals.  */
 #define YYNTOKENS  71
 /* YYNNTS -- Number of nonterminals.  */
 #define YYNNTS  44
 /* YYNRULES -- Number of rules.  */
-#define YYNRULES  112
+#define YYNRULES  113
 /* YYNSTATES -- Number of states.  */
-#define YYNSTATES  222
+#define YYNSTATES  223
 
 /* YYMAXUTOK -- Last valid token kind.  */
 #define YYMAXUTOK   315
@@ -626,11 +626,11 @@ static const yytype_int16 yyrline[] =
      247,   254,   258,   265,   269,   273,   277,   284,   288,   292,
      297,   302,   310,   311,   318,   322,   329,   333,   340,   344,
      351,   355,   359,   363,   367,   371,   378,   382,   389,   393,
-     400,   404,   411,   415,   419,   423,   430,   434,   441,   446,
-     452,   456,   460,   464,   468,   472,   479,   484,   490,   495,
-     501,   505,   512,   519,   523,   527,   534,   538,   542,   549,
-     553,   557,   561,   568,   575,   580,   586,   587,   588,   592,
-     593,   596,   598
+     400,   404,   408,   415,   419,   423,   427,   434,   438,   445,
+     450,   456,   460,   464,   468,   472,   476,   483,   488,   494,
+     499,   505,   509,   516,   523,   527,   531,   538,   542,   546,
+     553,   557,   561,   565,   572,   579,   584,   590,   591,   592,
+     596,   597,   600,   602
 };
 #endif
 
@@ -674,12 +674,12 @@ yysymbol_name (yysymbol_kind_t yysymbol)
 }
 #endif
 
-#define YYPACT_NINF (-105)
+#define YYPACT_NINF (-114)
 
 #define yypact_value_is_default(Yyn) \
   ((Yyn) == YYPACT_NINF)
 
-#define YYTABLE_NINF (-112)
+#define YYTABLE_NINF (-113)
 
 #define yytable_value_is_error(Yyn) \
   0
@@ -688,29 +688,29 @@ yysymbol_name (yysymbol_kind_t yysymbol)
    STATE-NUM.  */
 static const yytype_int16 yypact[] =
 {
-     143,    38,     7,    15,    -7,    51,    47,    -7,    66,   -12,
-    -105,  -105,  -105,  -105,  -105,  -105,  -105,    67,    10,  -105,
-    -105,  -105,  -105,  -105,  -105,  -105,    -7,    -7,  -105,    -7,
-      -7,  -105,  -105,    -7,    -7,    59,  -105,  -105,    49,    27,
-      30,    52,    62,    84,    86,    87,  -105,   110,   147,    99,
-    -105,   110,   100,  -105,  -105,  -105,   102,   104,  -105,   105,
-     158,   160,   122,   141,   121,   -54,   126,   126,   126,   126,
-     122,  -105,   -36,    83,  -105,   122,   122,   122,   122,   120,
-      60,  -105,  -105,    -3,  -105,   123,    12,  -105,   124,   125,
-     127,   128,   129,   130,  -105,   164,    -2,  -105,  -105,  -105,
-     -47,  -105,   135,    48,  -105,    57,    78,  -105,  -105,  -105,
-    -105,     2,  -105,   161,     2,     2,   122,  -105,    17,   149,
-    -105,  -105,  -105,  -105,  -105,  -105,  -105,   -12,   139,   -23,
-      -7,    -7,   153,  -105,   122,  -105,   133,  -105,  -105,  -105,
-     122,  -105,    76,  -105,  -105,  -105,  -105,  -105,  -105,  -105,
-      50,    60,    60,    60,  -105,  -105,   131,  -105,   184,   164,
-     164,   155,  -105,  -105,   185,   159,  -105,   145,  -105,  -105,
-      78,  -105,  -105,  -105,  -105,  -105,  -105,  -105,  -105,    78,
-      -7,  -105,  -105,    -7,   126,    60,   189,   142,  -105,  -105,
-     189,  -105,   140,  -105,  -105,  -105,   182,  -105,     2,   192,
-     162,  -105,   162,   126,    60,    60,   126,   151,  -105,  -105,
-    -105,  -105,  -105,    43,   146,  -105,  -105,  -105,  -105,  -105,
-     126,  -105
+     101,    23,     7,    15,   -40,    32,    36,   -40,    26,   -12,
+    -114,  -114,  -114,  -114,  -114,  -114,  -114,    57,    -9,  -114,
+    -114,  -114,  -114,  -114,  -114,  -114,   -40,   -40,  -114,   -40,
+     -40,  -114,  -114,   -40,   -40,    59,  -114,  -114,    49,    27,
+      30,    40,    42,    51,    53,    29,  -114,    63,   104,    71,
+    -114,    63,    92,  -114,  -114,  -114,    79,    94,  -114,    96,
+     159,   154,   123,   147,   127,   -38,   132,   132,   132,   132,
+     123,  -114,   -39,   136,  -114,   123,   123,   123,   123,   126,
+     116,  -114,  -114,    -3,  -114,   128,     5,  -114,   129,   130,
+     131,   133,   134,   135,  -114,   171,    -6,  -114,  -114,  -114,
+      12,  -114,    44,    58,  -114,    76,    91,  -114,  -114,  -114,
+    -114,    85,  -114,   175,    85,    85,   123,  -114,    13,   158,
+    -114,  -114,  -114,  -114,  -114,  -114,  -114,   -12,   150,   -36,
+     -40,   -40,   160,  -114,   123,  -114,   140,  -114,  -114,  -114,
+     123,  -114,    90,  -114,  -114,  -114,  -114,  -114,  -114,  -114,
+      52,   116,   116,   116,  -114,  -114,   109,  -114,   191,   171,
+     171,   161,  -114,  -114,   190,   164,  -114,   151,  -114,  -114,
+      91,  -114,  -114,  -114,  -114,  -114,  -114,  -114,  -114,    91,
+    -114,   -40,  -114,  -114,   -40,   132,   116,   193,   146,  -114,
+    -114,   193,  -114,   148,  -114,  -114,  -114,   186,  -114,    85,
+     196,   165,  -114,   165,   132,   116,   116,   132,   156,  -114,
+    -114,  -114,  -114,  -114,    33,   152,  -114,  -114,  -114,  -114,
+    -114,   132,  -114
 };
 
 /* YYDEFACT[STATE-NUM] -- Default reduction number in state STATE-NUM.
@@ -721,46 +721,46 @@ static const yytype_int8 yydefact[] =
        0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
        4,     3,    11,    12,    13,    14,     5,     0,     0,     9,
        6,    10,     7,     8,    28,    15,     0,     0,    20,     0,
-       0,   111,    22,     0,     0,     0,   109,   110,     0,     0,
-       0,     0,     0,     0,     0,   112,    72,    79,     0,    73,
-      74,    79,     0,    57,     1,     2,     0,     0,    21,     0,
+       0,   112,    22,     0,     0,     0,   110,   111,     0,     0,
+       0,     0,     0,     0,     0,   113,    73,    80,     0,    74,
+      75,    80,     0,    57,     1,     2,     0,     0,    21,     0,
        0,    52,     0,     0,     0,     0,     0,     0,     0,     0,
-       0,    76,     0,     0,    77,     0,     0,     0,     0,     0,
-       0,    26,   112,    52,    68,     0,     0,    16,     0,     0,
-       0,     0,     0,     0,    78,     0,    52,    96,    75,    56,
+       0,    77,     0,     0,    78,     0,     0,     0,     0,     0,
+       0,    26,   113,    52,    68,     0,     0,    16,     0,     0,
+       0,     0,     0,     0,    79,     0,    52,    97,    76,    56,
        0,    33,     0,     0,    35,     0,     0,    45,    43,    44,
       46,     0,    54,    53,     0,     0,     0,    27,     0,     0,
-      18,    81,    80,    82,    83,    84,    85,     0,     0,     0,
-       0,     0,    87,    19,     0,    38,     0,    40,    37,    23,
+      18,    82,    81,    83,    84,    85,    86,     0,     0,     0,
+       0,     0,    88,    19,     0,    38,     0,    40,    37,    23,
        0,    24,     0,    41,    64,    63,    65,    60,    61,    62,
        0,     0,     0,     0,    69,    70,     0,    17,     0,     0,
-       0,     0,    98,    97,     0,    89,    34,     0,    36,    25,
+       0,     0,    99,    98,     0,    90,    34,     0,    36,    25,
        0,    50,    55,    66,    67,    47,    49,    48,    51,     0,
-       0,    31,    32,     0,     0,     0,   100,     0,    42,    71,
-     100,    58,    86,    93,    94,    95,    88,    90,     0,     0,
-     105,    39,   105,     0,     0,     0,     0,     0,    30,    29,
-      59,    91,    92,   108,    99,   101,   104,   107,   106,   103,
-       0,   102
+      72,     0,    31,    32,     0,     0,     0,   101,     0,    42,
+      71,   101,    58,    87,    94,    95,    96,    89,    91,     0,
+       0,   106,    39,   106,     0,     0,     0,     0,     0,    30,
+      29,    59,    92,    93,   109,   100,   102,   105,   108,   107,
+     104,     0,   103
 };
 
 /* YYPGOTO[NTERM-NUM].  */
 static const yytype_int16 yypgoto[] =
 {
-    -105,  -105,  -105,  -105,  -105,  -105,  -105,  -105,   -94,  -105,
-    -105,   132,    79,  -105,  -105,   -68,    63,   -24,  -105,   -61,
-    -105,  -104,    64,  -105,   103,    88,  -105,   148,   165,   -71,
-    -105,  -105,  -105,    14,    18,  -105,    32,  -105,     0,    22,
-    -105,  -105,    -4,   -30
+    -114,  -114,  -114,  -114,  -114,  -114,  -114,  -114,   -85,  -114,
+    -114,   138,    84,  -114,  -114,   -68,    68,   -32,  -114,   -61,
+    -114,  -113,    67,  -114,   105,    95,  -114,   153,   172,   -71,
+    -114,  -114,  -114,    19,    21,  -114,    34,  -114,     8,    25,
+    -114,  -114,    -4,   -22
 };
 
 /* YYDEFGOTO[NTERM-NUM].  */
 static const yytype_uint8 yydefgoto[] =
 {
        0,    17,    18,    19,    20,    21,    22,    23,    24,   129,
-     100,   103,   101,   138,   142,   193,   112,    81,   113,    47,
-     192,   150,   175,    83,    84,    48,    49,    50,    71,    51,
-     165,   186,   196,   197,   198,    96,   200,   214,   215,   208,
-     219,    39,    52,    53
+     100,   103,   101,   138,   142,   194,   112,    81,   113,    47,
+     193,   150,   175,    83,    84,    48,    49,    50,    71,    51,
+     165,   187,   197,   198,   199,    96,   201,   215,   216,   209,
+     220,    39,    52,    53
 };
 
 /* YYTABLE[YYPACT[STATE-NUM]] -- What to do in state STATE-NUM.  If
@@ -768,56 +768,56 @@ static const yytype_uint8 yydefgoto[] =
    number is the opposite.  If YYTABLE_NINF, syntax error.  */
 static const yytype_int16 yytable[] =
 {
-      32,   128,    45,    35,    89,    90,    91,    92,    93,   115,
-     152,   153,   111,    26,    80,    80,    88,   133,   134,   114,
-      31,    29,    56,    57,   130,    58,    59,    95,   160,    60,
-      61,    27,    85,    40,    41,    42,    43,    44,   143,    30,
-      94,   161,    25,    28,    45,    99,   102,   104,   104,    31,
-     155,   217,   119,   120,   144,   145,   146,   218,    46,   117,
-      34,    33,   116,   131,   147,   181,   182,    54,    97,   148,
-     149,    55,   132,    82,   107,   108,   109,   110,    62,   171,
-     115,   176,   178,   111,   173,   173,    85,    63,   156,    64,
-     114,   174,   174,    65,   205,    40,    41,    42,    43,    44,
-      36,    37,   188,    38,   102,    40,    41,    42,    43,    44,
-     168,   189,   139,   140,   195,    66,    45,   107,   108,   109,
-     110,   141,   140,   191,   194,    67,   162,   163,    40,    41,
-      42,    43,    44,   195,   195,   107,   108,   109,   110,    45,
-     169,   170,   210,   194,   194,   213,     1,    68,     2,    69,
-       3,     4,     5,  -111,    70,     6,   135,   136,   137,   213,
-      72,     7,     8,     9,    73,    76,    75,    77,    78,    79,
-      10,    11,    12,    13,    14,    15,    97,    80,    82,   190,
-      86,    87,    45,   106,   127,   118,   151,   157,   121,   122,
-     159,   123,   124,   125,   126,   164,   167,   180,    16,   183,
-     179,   184,   185,   187,   199,   203,   201,   204,   206,   216,
-     105,   220,   207,   166,   172,   158,    74,   177,   211,   154,
-     221,    98,   202,   212,   209
+      32,   152,   153,    35,    89,    90,    91,    92,    93,   115,
+     128,    80,   111,    26,    80,   160,    31,    31,    45,   114,
+     130,    29,    56,    57,    95,    58,    59,    25,   161,    60,
+      61,    27,    88,    40,    41,    42,    43,    44,   143,    30,
+      85,   218,    33,    28,    45,   119,   120,   219,    94,    34,
+     155,   117,    55,    99,   102,   104,   104,    54,    46,   131,
+      36,    37,   116,    38,   132,   135,   136,   137,    97,    82,
+     107,   108,   109,   110,   182,   183,   133,   134,    62,   171,
+     115,   176,   178,   111,   173,   173,   206,    63,   180,    64,
+     114,   174,   174,    65,    85,  -112,   156,    40,    41,    42,
+      43,    44,   189,    66,     1,    67,     2,    70,     3,     4,
+       5,   190,   102,     6,    68,   196,    69,    72,   168,     7,
+       8,     9,   139,   140,   192,   195,   162,   163,    10,    11,
+      12,    13,    14,    15,   196,   196,    73,   144,   145,   146,
+     141,   140,    76,   211,   195,   195,   214,   147,   107,   108,
+     109,   110,   148,   149,   169,   170,    16,    77,    75,    78,
+     214,    40,    41,    42,    43,    44,   107,   108,   109,   110,
+      79,    80,    45,   107,   108,   109,   110,    97,   179,    82,
+     191,    40,    41,    42,    43,    44,    86,    87,    45,   106,
+     118,   127,    45,   121,   122,   123,   157,   124,   125,   126,
+     151,   159,   164,   167,   181,   184,   185,   186,   200,   188,
+     202,   205,   207,   204,   217,   208,   105,   221,   166,   172,
+     177,   154,   158,    74,   212,   203,    98,   213,   210,   222
 };
 
 static const yytype_uint8 yycheck[] =
 {
-       4,    95,    56,     7,    65,    66,    67,    68,    69,    80,
-     114,   115,    80,     6,    17,    17,    70,    64,    65,    80,
-      56,     6,    26,    27,    26,    29,    30,    63,    51,    33,
-      34,    24,    62,    45,    46,    47,    48,    49,   106,    24,
-      70,    64,     4,    36,    56,    75,    76,    77,    78,    56,
-     118,     8,    40,    41,    52,    53,    54,    14,    70,    83,
-      13,    10,    65,    65,    62,   159,   160,     0,    72,    67,
-      68,    61,    96,    56,    57,    58,    59,    60,    19,   150,
-     151,   152,   153,   151,   152,   153,   116,    38,   118,    62,
-     151,   152,   153,    63,   198,    45,    46,    47,    48,    49,
-      34,    35,   170,    37,   134,    45,    46,    47,    48,    49,
-     140,   179,    64,    65,   185,    63,    56,    57,    58,    59,
-      60,    64,    65,   184,   185,    63,   130,   131,    45,    46,
-      47,    48,    49,   204,   205,    57,    58,    59,    60,    56,
-      64,    65,   203,   204,   205,   206,     3,    63,     5,    63,
-       7,     8,     9,    66,    44,    12,    21,    22,    23,   220,
-      13,    18,    19,    20,    65,    63,    66,    63,    63,    11,
-      27,    28,    29,    30,    31,    32,   180,    17,    56,   183,
-      39,    60,    56,    63,    20,    62,    25,    38,    64,    64,
-      51,    64,    64,    64,    64,    42,    63,    13,    55,    44,
-      69,    16,    43,    58,    15,    65,    64,    25,    16,    58,
-      78,    65,    50,   134,   151,   127,    51,   153,   204,   116,
-     220,    73,   190,   205,   202
+       4,   114,   115,     7,    65,    66,    67,    68,    69,    80,
+      95,    17,    80,     6,    17,    51,    56,    56,    56,    80,
+      26,     6,    26,    27,    63,    29,    30,     4,    64,    33,
+      34,    24,    70,    45,    46,    47,    48,    49,   106,    24,
+      62,     8,    10,    36,    56,    40,    41,    14,    70,    13,
+     118,    83,    61,    75,    76,    77,    78,     0,    70,    65,
+      34,    35,    65,    37,    96,    21,    22,    23,    72,    56,
+      57,    58,    59,    60,   159,   160,    64,    65,    19,   150,
+     151,   152,   153,   151,   152,   153,   199,    38,   156,    62,
+     151,   152,   153,    63,   116,    66,   118,    45,    46,    47,
+      48,    49,   170,    63,     3,    63,     5,    44,     7,     8,
+       9,   179,   134,    12,    63,   186,    63,    13,   140,    18,
+      19,    20,    64,    65,   185,   186,   130,   131,    27,    28,
+      29,    30,    31,    32,   205,   206,    65,    52,    53,    54,
+      64,    65,    63,   204,   205,   206,   207,    62,    57,    58,
+      59,    60,    67,    68,    64,    65,    55,    63,    66,    63,
+     221,    45,    46,    47,    48,    49,    57,    58,    59,    60,
+      11,    17,    56,    57,    58,    59,    60,   181,    69,    56,
+     184,    45,    46,    47,    48,    49,    39,    60,    56,    63,
+      62,    20,    56,    64,    64,    64,    38,    64,    64,    64,
+      25,    51,    42,    63,    13,    44,    16,    43,    15,    58,
+      64,    25,    16,    65,    58,    50,    78,    65,   134,   151,
+     153,   116,   127,    51,   205,   191,    73,   206,   203,   221
 };
 
 /* YYSTOS[STATE-NUM] -- The symbol kind of the accessing symbol of
@@ -842,11 +842,11 @@ static const yytype_int8 yystos[] =
       92,    25,    92,    92,    95,    86,   114,    38,    96,    51,
       51,    64,   113,   113,    42,   101,    83,    63,   114,    64,
       65,   100,    87,    86,    90,    93,   100,    93,   100,    69,
-      13,    79,    79,    44,    16,    43,   102,    58,    86,    86,
-     113,    90,    91,    86,    90,   100,   103,   104,   105,    15,
-     107,    64,   107,    65,    25,    92,    16,    50,   110,   110,
-      90,   104,   105,    90,   108,   109,    58,     8,    14,   111,
-      65,   109
+      86,    13,    79,    79,    44,    16,    43,   102,    58,    86,
+      86,   113,    90,    91,    86,    90,   100,   103,   104,   105,
+      15,   107,    64,   107,    65,    25,    92,    16,    50,   110,
+     110,    90,   104,   105,    90,   108,   109,    58,     8,    14,
+     111,    65,   109
 };
 
 /* YYR1[RULE-NUM] -- Symbol kind of the left-hand side of rule RULE-NUM.  */
@@ -859,11 +859,11 @@ static const yytype_int8 yyr1[] =
       84,    85,    85,    86,    86,    86,    86,    87,    87,    87,
       87,    87,    88,    88,    89,    89,    90,    90,    91,    91,
       92,    92,    92,    92,    92,    92,    93,    93,    94,    94,
-      95,    95,    96,    96,    97,    97,    98,    98,    99,    99,
-     100,   100,   100,   100,   100,   100,   101,   101,   102,   102,
-     103,   103,   104,   105,   105,   105,   106,   106,   106,   107,
-     107,   108,   108,   109,   110,   110,   111,   111,   111,   112,
-     112,   113,   114
+      95,    95,    95,    96,    96,    97,    97,    98,    98,    99,
+      99,   100,   100,   100,   100,   100,   100,   101,   101,   102,
+     102,   103,   103,   104,   105,   105,   105,   106,   106,   106,
+     107,   107,   108,   108,   109,   110,   110,   111,   111,   111,
+     112,   112,   113,   114
 };
 
 /* YYR2[RULE-NUM] -- Number of symbols on the right-hand side of rule RULE-NUM.  */
@@ -876,11 +876,11 @@ static const yytype_int8 yyr2[] =
        1,     1,     3,     1,     1,     1,     1,     3,     3,     3,
        3,     3,     0,     2,     1,     3,     3,     1,     1,     3,
        1,     1,     1,     1,     1,     1,     1,     1,     1,     3,
-       3,     5,     1,     1,     1,     3,     2,     2,     2,     0,
-       4,     4,     4,     4,     4,     4,     3,     0,     2,     0,
-       1,     3,     3,     1,     1,     1,     1,     3,     3,     3,
-       0,     1,     3,     2,     2,     0,     1,     1,     0,     1,
-       1,     1,     1
+       3,     5,     4,     1,     1,     1,     3,     2,     2,     2,
+       0,     4,     4,     4,     4,     4,     4,     3,     0,     2,
+       0,     1,     3,     3,     1,     1,     1,     1,     3,     3,
+       3,     0,     1,     3,     2,     2,     0,     1,     1,     0,
+       1,     1,     1,     1
 };
 
 
@@ -1736,824 +1736,832 @@ yyreduce:
   switch (yyn)
     {
   case 2: /* start: stmt ';'  */
-#line 71 "/home/lx/rmdb/src/parser/yacc.y"
+#line 71 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         parse_tree = (yyvsp[-1].sv_node);
         YYACCEPT;
     }
-#line 1745 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1745 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 3: /* start: HELP  */
-#line 76 "/home/lx/rmdb/src/parser/yacc.y"
+#line 76 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         parse_tree = std::make_shared<Help>();
         YYACCEPT;
     }
-#line 1754 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1754 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 4: /* start: EXIT  */
-#line 81 "/home/lx/rmdb/src/parser/yacc.y"
+#line 81 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         parse_tree = nullptr;
         YYACCEPT;
     }
-#line 1763 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1763 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 5: /* start: T_EOF  */
-#line 86 "/home/lx/rmdb/src/parser/yacc.y"
+#line 86 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         parse_tree = nullptr;
         YYACCEPT;
     }
-#line 1772 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1772 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 11: /* txnStmt: TXN_BEGIN  */
-#line 102 "/home/lx/rmdb/src/parser/yacc.y"
+#line 102 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<TxnBegin>();
     }
-#line 1780 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1780 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 12: /* txnStmt: TXN_COMMIT  */
-#line 106 "/home/lx/rmdb/src/parser/yacc.y"
+#line 106 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<TxnCommit>();
     }
-#line 1788 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1788 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 13: /* txnStmt: TXN_ABORT  */
-#line 110 "/home/lx/rmdb/src/parser/yacc.y"
+#line 110 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<TxnAbort>();
     }
-#line 1796 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1796 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 14: /* txnStmt: TXN_ROLLBACK  */
-#line 114 "/home/lx/rmdb/src/parser/yacc.y"
+#line 114 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<TxnRollback>();
     }
-#line 1804 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1804 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 15: /* dbStmt: SHOW TABLES  */
-#line 121 "/home/lx/rmdb/src/parser/yacc.y"
+#line 121 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<ShowTables>();
     }
-#line 1812 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1812 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 16: /* setStmt: SET set_knob_type '=' VALUE_BOOL  */
-#line 128 "/home/lx/rmdb/src/parser/yacc.y"
+#line 128 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<SetStmt>((yyvsp[-2].sv_setKnobType), (yyvsp[0].sv_bool));
     }
-#line 1820 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1820 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 17: /* setStmt: SET TRANSACTION ISOLATION LEVEL SNAPSHOT ISOLATION  */
-#line 132 "/home/lx/rmdb/src/parser/yacc.y"
+#line 132 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<SetTransactionIsolation>(false);
     }
-#line 1828 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1828 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 18: /* setStmt: SET TRANSACTION ISOLATION LEVEL SERIALIZABLE  */
-#line 136 "/home/lx/rmdb/src/parser/yacc.y"
+#line 136 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<SetTransactionIsolation>(true);
     }
-#line 1836 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1836 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 19: /* ddl: CREATE TABLE tbName '(' fieldList ')'  */
-#line 143 "/home/lx/rmdb/src/parser/yacc.y"
+#line 143 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<CreateTable>((yyvsp[-3].sv_str), (yyvsp[-1].sv_fields));
     }
-#line 1844 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1844 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 20: /* ddl: CREATE STATIC_CHECKPOINT  */
-#line 147 "/home/lx/rmdb/src/parser/yacc.y"
+#line 147 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<CreateStaticCheckpoint>();
     }
-#line 1852 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1852 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 21: /* ddl: DROP TABLE tbName  */
-#line 151 "/home/lx/rmdb/src/parser/yacc.y"
+#line 151 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<DropTable>((yyvsp[0].sv_str));
     }
-#line 1860 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1860 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 22: /* ddl: DESC tbName  */
-#line 155 "/home/lx/rmdb/src/parser/yacc.y"
+#line 155 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<DescTable>((yyvsp[0].sv_str));
     }
-#line 1868 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1868 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 23: /* ddl: CREATE INDEX tbName '(' colNameList ')'  */
-#line 159 "/home/lx/rmdb/src/parser/yacc.y"
+#line 159 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<CreateIndex>((yyvsp[-3].sv_str), (yyvsp[-1].sv_strs));
     }
-#line 1876 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1876 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 24: /* ddl: DROP INDEX tbName '(' colNameList ')'  */
-#line 163 "/home/lx/rmdb/src/parser/yacc.y"
+#line 163 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<DropIndex>((yyvsp[-3].sv_str), (yyvsp[-1].sv_strs));
     }
-#line 1884 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1884 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 25: /* dml: INSERT INTO tbName VALUES '(' valueList ')'  */
-#line 170 "/home/lx/rmdb/src/parser/yacc.y"
+#line 170 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<InsertStmt>((yyvsp[-4].sv_str), (yyvsp[-1].sv_vals));
     }
-#line 1892 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1892 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 26: /* dml: DELETE FROM tbName optWhereClause  */
-#line 174 "/home/lx/rmdb/src/parser/yacc.y"
+#line 174 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<DeleteStmt>((yyvsp[-1].sv_str), (yyvsp[0].sv_conds));
     }
-#line 1900 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1900 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 27: /* dml: UPDATE tbName SET setClauses optWhereClause  */
-#line 178 "/home/lx/rmdb/src/parser/yacc.y"
+#line 178 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<UpdateStmt>((yyvsp[-3].sv_str), (yyvsp[-1].sv_set_clauses), (yyvsp[0].sv_conds));
     }
-#line 1908 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1908 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 28: /* dml: select_stmt  */
-#line 182 "/home/lx/rmdb/src/parser/yacc.y"
+#line 182 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = (yyvsp[0].sv_select_stmt);
     }
-#line 1916 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1916 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 29: /* dml: SELECT selector FROM '(' union_query ')' AS tbName opt_order_clause opt_limit_clause  */
-#line 186 "/home/lx/rmdb/src/parser/yacc.y"
+#line 186 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_node) = std::make_shared<UnionStmt>((yyvsp[-5].sv_select_stmts), (yyvsp[-2].sv_str), (yyvsp[-1].sv_orderbys), (yyvsp[0].sv_int) >= 0, (yyvsp[0].sv_int));
     }
-#line 1924 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1924 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 30: /* select_stmt: SELECT selector FROM tableList optWhereClause opt_group_clause opt_having_clause opt_order_clause opt_limit_clause  */
-#line 193 "/home/lx/rmdb/src/parser/yacc.y"
+#line 193 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_select_stmt) = std::make_shared<SelectStmt>((yyvsp[-7].sv_select_items), (yyvsp[-5].sv_strs), (yyvsp[-4].sv_conds), (yyvsp[-3].sv_cols), (yyvsp[-2].sv_having_conds), (yyvsp[-1].sv_orderbys), (yyvsp[0].sv_int) >= 0, (yyvsp[0].sv_int));
     }
-#line 1932 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1932 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 31: /* union_query: select_stmt UNION select_stmt  */
-#line 200 "/home/lx/rmdb/src/parser/yacc.y"
+#line 200 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_select_stmts) = std::vector<std::shared_ptr<SelectStmt>>{(yyvsp[-2].sv_select_stmt), (yyvsp[0].sv_select_stmt)};
     }
-#line 1940 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1940 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 32: /* union_query: union_query UNION select_stmt  */
-#line 204 "/home/lx/rmdb/src/parser/yacc.y"
+#line 204 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_select_stmts).push_back((yyvsp[0].sv_select_stmt));
     }
-#line 1948 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1948 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 33: /* fieldList: field  */
-#line 211 "/home/lx/rmdb/src/parser/yacc.y"
+#line 211 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_fields) = std::vector<std::shared_ptr<Field>>{(yyvsp[0].sv_field)};
     }
-#line 1956 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1956 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 34: /* fieldList: fieldList ',' field  */
-#line 215 "/home/lx/rmdb/src/parser/yacc.y"
+#line 215 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_fields).push_back((yyvsp[0].sv_field));
     }
-#line 1964 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1964 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 35: /* colNameList: colName  */
-#line 222 "/home/lx/rmdb/src/parser/yacc.y"
+#line 222 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_strs) = std::vector<std::string>{(yyvsp[0].sv_str)};
     }
-#line 1972 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1972 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 36: /* colNameList: colNameList ',' colName  */
-#line 226 "/home/lx/rmdb/src/parser/yacc.y"
+#line 226 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_strs).push_back((yyvsp[0].sv_str));
     }
-#line 1980 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1980 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 37: /* field: colName type  */
-#line 233 "/home/lx/rmdb/src/parser/yacc.y"
+#line 233 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_field) = std::make_shared<ColDef>((yyvsp[-1].sv_str), (yyvsp[0].sv_type_len));
     }
-#line 1988 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1988 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 38: /* type: INT  */
-#line 240 "/home/lx/rmdb/src/parser/yacc.y"
+#line 240 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_type_len) = std::make_shared<TypeLen>(SV_TYPE_INT, sizeof(int));
     }
-#line 1996 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 1996 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 39: /* type: CHAR '(' VALUE_INT ')'  */
-#line 244 "/home/lx/rmdb/src/parser/yacc.y"
+#line 244 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_type_len) = std::make_shared<TypeLen>(SV_TYPE_STRING, (yyvsp[-1].sv_int));
     }
-#line 2004 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2004 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 40: /* type: FLOAT  */
-#line 248 "/home/lx/rmdb/src/parser/yacc.y"
+#line 248 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_type_len) = std::make_shared<TypeLen>(SV_TYPE_FLOAT, sizeof(float));
     }
-#line 2012 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2012 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 41: /* valueList: value  */
-#line 255 "/home/lx/rmdb/src/parser/yacc.y"
+#line 255 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_vals) = std::vector<std::shared_ptr<Value>>{(yyvsp[0].sv_val)};
     }
-#line 2020 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2020 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 42: /* valueList: valueList ',' value  */
-#line 259 "/home/lx/rmdb/src/parser/yacc.y"
+#line 259 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_vals).push_back((yyvsp[0].sv_val));
     }
-#line 2028 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2028 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 43: /* value: VALUE_INT  */
-#line 266 "/home/lx/rmdb/src/parser/yacc.y"
+#line 266 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_val) = std::make_shared<IntLit>((yyvsp[0].sv_int));
     }
-#line 2036 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2036 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 44: /* value: VALUE_FLOAT  */
-#line 270 "/home/lx/rmdb/src/parser/yacc.y"
+#line 270 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_val) = std::make_shared<FloatLit>((yyvsp[0].sv_float));
     }
-#line 2044 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2044 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 45: /* value: VALUE_STRING  */
-#line 274 "/home/lx/rmdb/src/parser/yacc.y"
+#line 274 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_val) = std::make_shared<StringLit>((yyvsp[0].sv_str));
     }
-#line 2052 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2052 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 46: /* value: VALUE_BOOL  */
-#line 278 "/home/lx/rmdb/src/parser/yacc.y"
+#line 278 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_val) = std::make_shared<BoolLit>((yyvsp[0].sv_bool));
     }
-#line 2060 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2060 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 47: /* condition: col op expr  */
-#line 285 "/home/lx/rmdb/src/parser/yacc.y"
+#line 285 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_cond) = std::make_shared<BinaryExpr>((yyvsp[-2].sv_col), (yyvsp[-1].sv_comp_op), (yyvsp[0].sv_expr));
     }
-#line 2068 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2068 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 48: /* condition: agg_func op expr  */
-#line 289 "/home/lx/rmdb/src/parser/yacc.y"
+#line 289 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_cond) = std::make_shared<BinaryExpr>(std::make_shared<Col>("", "__invalid_where_agg__"), (yyvsp[-1].sv_comp_op), (yyvsp[0].sv_expr));
     }
-#line 2076 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2076 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 49: /* condition: col op agg_func  */
-#line 293 "/home/lx/rmdb/src/parser/yacc.y"
+#line 293 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_cond) = std::make_shared<BinaryExpr>((yyvsp[-2].sv_col), (yyvsp[-1].sv_comp_op),
                 std::static_pointer_cast<Expr>(std::make_shared<Col>("", "__invalid_where_agg__")));
     }
-#line 2085 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2085 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 50: /* condition: value op agg_func  */
-#line 298 "/home/lx/rmdb/src/parser/yacc.y"
+#line 298 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_cond) = std::make_shared<BinaryExpr>(std::make_shared<Col>("", "__invalid_where_agg__"), (yyvsp[-1].sv_comp_op),
                 std::static_pointer_cast<Expr>(std::make_shared<Col>("", "__invalid_where_agg__")));
     }
-#line 2094 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2094 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 51: /* condition: agg_func op agg_func  */
-#line 303 "/home/lx/rmdb/src/parser/yacc.y"
+#line 303 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_cond) = std::make_shared<BinaryExpr>(std::make_shared<Col>("", "__invalid_where_agg__"), (yyvsp[-1].sv_comp_op),
                 std::static_pointer_cast<Expr>(std::make_shared<Col>("", "__invalid_where_agg__")));
     }
-#line 2103 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2103 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 52: /* optWhereClause: %empty  */
-#line 310 "/home/lx/rmdb/src/parser/yacc.y"
+#line 310 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
                       { /* ignore*/ }
-#line 2109 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2109 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 53: /* optWhereClause: WHERE whereClause  */
-#line 312 "/home/lx/rmdb/src/parser/yacc.y"
+#line 312 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_conds) = (yyvsp[0].sv_conds);
     }
-#line 2117 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2117 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 54: /* whereClause: condition  */
-#line 319 "/home/lx/rmdb/src/parser/yacc.y"
+#line 319 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_conds) = std::vector<std::shared_ptr<BinaryExpr>>{(yyvsp[0].sv_cond)};
     }
-#line 2125 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2125 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 55: /* whereClause: whereClause AND condition  */
-#line 323 "/home/lx/rmdb/src/parser/yacc.y"
+#line 323 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_conds).push_back((yyvsp[0].sv_cond));
     }
-#line 2133 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2133 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 56: /* col: tbName '.' colName  */
-#line 330 "/home/lx/rmdb/src/parser/yacc.y"
+#line 330 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_col) = std::make_shared<Col>((yyvsp[-2].sv_str), (yyvsp[0].sv_str));
     }
-#line 2141 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2141 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 57: /* col: colName  */
-#line 334 "/home/lx/rmdb/src/parser/yacc.y"
+#line 334 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_col) = std::make_shared<Col>("", (yyvsp[0].sv_str));
     }
-#line 2149 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2149 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 58: /* colList: col  */
-#line 341 "/home/lx/rmdb/src/parser/yacc.y"
+#line 341 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_cols) = std::vector<std::shared_ptr<Col>>{(yyvsp[0].sv_col)};
     }
-#line 2157 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2157 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 59: /* colList: colList ',' col  */
-#line 345 "/home/lx/rmdb/src/parser/yacc.y"
+#line 345 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_cols).push_back((yyvsp[0].sv_col));
     }
-#line 2165 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2165 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 60: /* op: '='  */
-#line 352 "/home/lx/rmdb/src/parser/yacc.y"
+#line 352 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_comp_op) = SV_OP_EQ;
     }
-#line 2173 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2173 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 61: /* op: '<'  */
-#line 356 "/home/lx/rmdb/src/parser/yacc.y"
+#line 356 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_comp_op) = SV_OP_LT;
     }
-#line 2181 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2181 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 62: /* op: '>'  */
-#line 360 "/home/lx/rmdb/src/parser/yacc.y"
+#line 360 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_comp_op) = SV_OP_GT;
     }
-#line 2189 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2189 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 63: /* op: NEQ  */
-#line 364 "/home/lx/rmdb/src/parser/yacc.y"
+#line 364 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_comp_op) = SV_OP_NE;
     }
-#line 2197 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2197 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 64: /* op: LEQ  */
-#line 368 "/home/lx/rmdb/src/parser/yacc.y"
+#line 368 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_comp_op) = SV_OP_LE;
     }
-#line 2205 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2205 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 65: /* op: GEQ  */
-#line 372 "/home/lx/rmdb/src/parser/yacc.y"
+#line 372 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_comp_op) = SV_OP_GE;
     }
-#line 2213 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2213 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 66: /* expr: value  */
-#line 379 "/home/lx/rmdb/src/parser/yacc.y"
+#line 379 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_expr) = std::static_pointer_cast<Expr>((yyvsp[0].sv_val));
     }
-#line 2221 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2221 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 67: /* expr: col  */
-#line 383 "/home/lx/rmdb/src/parser/yacc.y"
+#line 383 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_expr) = std::static_pointer_cast<Expr>((yyvsp[0].sv_col));
     }
-#line 2229 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2229 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 68: /* setClauses: setClause  */
-#line 390 "/home/lx/rmdb/src/parser/yacc.y"
+#line 390 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_set_clauses) = std::vector<std::shared_ptr<SetClause>>{(yyvsp[0].sv_set_clause)};
     }
-#line 2237 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2237 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 69: /* setClauses: setClauses ',' setClause  */
-#line 394 "/home/lx/rmdb/src/parser/yacc.y"
+#line 394 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_set_clauses).push_back((yyvsp[0].sv_set_clause));
     }
-#line 2245 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2245 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 70: /* setClause: colName '=' value  */
-#line 401 "/home/lx/rmdb/src/parser/yacc.y"
+#line 401 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_set_clause) = std::make_shared<SetClause>((yyvsp[-2].sv_str), (yyvsp[0].sv_val));
     }
-#line 2253 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2253 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
   case 71: /* setClause: colName '=' colName '+' value  */
-#line 405 "/home/lx/rmdb/src/parser/yacc.y"
+#line 405 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_set_clause) = std::make_shared<SetClause>((yyvsp[-4].sv_str), (yyvsp[-2].sv_str), (yyvsp[0].sv_val));
     }
-#line 2261 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2261 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 72: /* selector: '*'  */
-#line 412 "/home/lx/rmdb/src/parser/yacc.y"
+  case 72: /* setClause: colName '=' colName value  */
+#line 409 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
+    {
+        (yyval.sv_set_clause) = std::make_shared<SetClause>((yyvsp[-3].sv_str), (yyvsp[-1].sv_str), (yyvsp[0].sv_val));
+    }
+#line 2269 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
+    break;
+
+  case 73: /* selector: '*'  */
+#line 416 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_select_items) = {};
     }
-#line 2269 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2277 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 74: /* select_item_list: select_item  */
-#line 420 "/home/lx/rmdb/src/parser/yacc.y"
+  case 75: /* select_item_list: select_item  */
+#line 424 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_select_items) = std::vector<std::shared_ptr<SelectItem>>{(yyvsp[0].sv_select_item)};
     }
-#line 2277 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2285 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 75: /* select_item_list: select_item_list ',' select_item  */
-#line 424 "/home/lx/rmdb/src/parser/yacc.y"
+  case 76: /* select_item_list: select_item_list ',' select_item  */
+#line 428 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_select_items).push_back((yyvsp[0].sv_select_item));
     }
-#line 2285 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2293 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 76: /* select_item: col opt_alias  */
-#line 431 "/home/lx/rmdb/src/parser/yacc.y"
+  case 77: /* select_item: col opt_alias  */
+#line 435 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_select_item) = std::make_shared<SelectItem>((yyvsp[-1].sv_col), (yyvsp[0].sv_str));
     }
-#line 2293 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2301 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 77: /* select_item: agg_func opt_alias  */
-#line 435 "/home/lx/rmdb/src/parser/yacc.y"
+  case 78: /* select_item: agg_func opt_alias  */
+#line 439 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_select_item) = std::make_shared<SelectItem>((yyvsp[-1].sv_agg_func), (yyvsp[0].sv_str));
     }
-#line 2301 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2309 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 78: /* opt_alias: AS colName  */
-#line 442 "/home/lx/rmdb/src/parser/yacc.y"
+  case 79: /* opt_alias: AS colName  */
+#line 446 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_str) = (yyvsp[0].sv_str);
     }
-#line 2309 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2317 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 79: /* opt_alias: %empty  */
-#line 446 "/home/lx/rmdb/src/parser/yacc.y"
+  case 80: /* opt_alias: %empty  */
+#line 450 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_str) = "";
     }
-#line 2317 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2325 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 80: /* agg_func: COUNT '(' col ')'  */
-#line 453 "/home/lx/rmdb/src/parser/yacc.y"
+  case 81: /* agg_func: COUNT '(' col ')'  */
+#line 457 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_agg_func) = std::make_shared<AggFunc>(AGG_COUNT, (yyvsp[-1].sv_col), false);
     }
-#line 2325 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2333 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 81: /* agg_func: COUNT '(' '*' ')'  */
-#line 457 "/home/lx/rmdb/src/parser/yacc.y"
+  case 82: /* agg_func: COUNT '(' '*' ')'  */
+#line 461 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_agg_func) = std::make_shared<AggFunc>(AGG_COUNT, nullptr, true);
     }
-#line 2333 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2341 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 82: /* agg_func: MAX '(' col ')'  */
-#line 461 "/home/lx/rmdb/src/parser/yacc.y"
+  case 83: /* agg_func: MAX '(' col ')'  */
+#line 465 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_agg_func) = std::make_shared<AggFunc>(AGG_MAX, (yyvsp[-1].sv_col), false);
     }
-#line 2341 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2349 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 83: /* agg_func: MIN '(' col ')'  */
-#line 465 "/home/lx/rmdb/src/parser/yacc.y"
+  case 84: /* agg_func: MIN '(' col ')'  */
+#line 469 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_agg_func) = std::make_shared<AggFunc>(AGG_MIN, (yyvsp[-1].sv_col), false);
     }
-#line 2349 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2357 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 84: /* agg_func: SUM '(' col ')'  */
-#line 469 "/home/lx/rmdb/src/parser/yacc.y"
+  case 85: /* agg_func: SUM '(' col ')'  */
+#line 473 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_agg_func) = std::make_shared<AggFunc>(AGG_SUM, (yyvsp[-1].sv_col), false);
     }
-#line 2357 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2365 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 85: /* agg_func: AVG '(' col ')'  */
-#line 473 "/home/lx/rmdb/src/parser/yacc.y"
+  case 86: /* agg_func: AVG '(' col ')'  */
+#line 477 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_agg_func) = std::make_shared<AggFunc>(AGG_AVG, (yyvsp[-1].sv_col), false);
     }
-#line 2365 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2373 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 86: /* opt_group_clause: GROUP BY colList  */
-#line 480 "/home/lx/rmdb/src/parser/yacc.y"
+  case 87: /* opt_group_clause: GROUP BY colList  */
+#line 484 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_cols) = (yyvsp[0].sv_cols);
     }
-#line 2373 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2381 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 87: /* opt_group_clause: %empty  */
-#line 484 "/home/lx/rmdb/src/parser/yacc.y"
+  case 88: /* opt_group_clause: %empty  */
+#line 488 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_cols) = {};
     }
-#line 2381 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2389 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 88: /* opt_having_clause: HAVING having_clause  */
-#line 491 "/home/lx/rmdb/src/parser/yacc.y"
+  case 89: /* opt_having_clause: HAVING having_clause  */
+#line 495 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_having_conds) = (yyvsp[0].sv_having_conds);
     }
-#line 2389 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2397 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 89: /* opt_having_clause: %empty  */
-#line 495 "/home/lx/rmdb/src/parser/yacc.y"
+  case 90: /* opt_having_clause: %empty  */
+#line 499 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_having_conds) = {};
     }
-#line 2397 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2405 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 90: /* having_clause: having_condition  */
-#line 502 "/home/lx/rmdb/src/parser/yacc.y"
+  case 91: /* having_clause: having_condition  */
+#line 506 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_having_conds) = std::vector<std::shared_ptr<HavingExpr>>{(yyvsp[0].sv_having_cond)};
     }
-#line 2405 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2413 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 91: /* having_clause: having_clause AND having_condition  */
-#line 506 "/home/lx/rmdb/src/parser/yacc.y"
+  case 92: /* having_clause: having_clause AND having_condition  */
+#line 510 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_having_conds).push_back((yyvsp[0].sv_having_cond));
     }
-#line 2413 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2421 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 92: /* having_condition: having_term op having_term  */
-#line 513 "/home/lx/rmdb/src/parser/yacc.y"
+  case 93: /* having_condition: having_term op having_term  */
+#line 517 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_having_cond) = std::make_shared<HavingExpr>((yyvsp[-2].sv_expr), (yyvsp[-1].sv_comp_op), (yyvsp[0].sv_expr));
     }
-#line 2421 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2429 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 93: /* having_term: value  */
-#line 520 "/home/lx/rmdb/src/parser/yacc.y"
+  case 94: /* having_term: value  */
+#line 524 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_expr) = std::static_pointer_cast<Expr>((yyvsp[0].sv_val));
     }
-#line 2429 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2437 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 94: /* having_term: col  */
-#line 524 "/home/lx/rmdb/src/parser/yacc.y"
+  case 95: /* having_term: col  */
+#line 528 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_expr) = std::static_pointer_cast<Expr>((yyvsp[0].sv_col));
     }
-#line 2437 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2445 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 95: /* having_term: agg_func  */
-#line 528 "/home/lx/rmdb/src/parser/yacc.y"
+  case 96: /* having_term: agg_func  */
+#line 532 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_expr) = std::static_pointer_cast<Expr>((yyvsp[0].sv_agg_func));
     }
-#line 2445 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2453 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 96: /* tableList: tbName  */
-#line 535 "/home/lx/rmdb/src/parser/yacc.y"
+  case 97: /* tableList: tbName  */
+#line 539 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_strs) = std::vector<std::string>{(yyvsp[0].sv_str)};
     }
-#line 2453 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2461 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 97: /* tableList: tableList ',' tbName  */
-#line 539 "/home/lx/rmdb/src/parser/yacc.y"
+  case 98: /* tableList: tableList ',' tbName  */
+#line 543 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_strs).push_back((yyvsp[0].sv_str));
     }
-#line 2461 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2469 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 98: /* tableList: tableList JOIN tbName  */
-#line 543 "/home/lx/rmdb/src/parser/yacc.y"
+  case 99: /* tableList: tableList JOIN tbName  */
+#line 547 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_strs).push_back((yyvsp[0].sv_str));
     }
-#line 2469 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2477 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 99: /* opt_order_clause: ORDER BY order_clause  */
-#line 550 "/home/lx/rmdb/src/parser/yacc.y"
+  case 100: /* opt_order_clause: ORDER BY order_clause  */
+#line 554 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     { 
         (yyval.sv_orderbys) = (yyvsp[0].sv_orderbys); 
     }
-#line 2477 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2485 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 100: /* opt_order_clause: %empty  */
-#line 553 "/home/lx/rmdb/src/parser/yacc.y"
+  case 101: /* opt_order_clause: %empty  */
+#line 557 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
                       { (yyval.sv_orderbys) = {}; }
-#line 2483 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2491 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 101: /* order_clause: order_item  */
-#line 558 "/home/lx/rmdb/src/parser/yacc.y"
+  case 102: /* order_clause: order_item  */
+#line 562 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_orderbys) = std::vector<std::shared_ptr<OrderBy>>{(yyvsp[0].sv_orderby)};
     }
-#line 2491 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2499 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 102: /* order_clause: order_clause ',' order_item  */
-#line 562 "/home/lx/rmdb/src/parser/yacc.y"
+  case 103: /* order_clause: order_clause ',' order_item  */
+#line 566 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_orderbys).push_back((yyvsp[0].sv_orderby));
     }
-#line 2499 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2507 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 103: /* order_item: col opt_asc_desc  */
-#line 569 "/home/lx/rmdb/src/parser/yacc.y"
+  case 104: /* order_item: col opt_asc_desc  */
+#line 573 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     { 
         (yyval.sv_orderby) = std::make_shared<OrderBy>((yyvsp[-1].sv_col), (yyvsp[0].sv_orderby_dir));
     }
-#line 2507 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2515 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 104: /* opt_limit_clause: LIMIT VALUE_INT  */
-#line 576 "/home/lx/rmdb/src/parser/yacc.y"
+  case 105: /* opt_limit_clause: LIMIT VALUE_INT  */
+#line 580 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_int) = (yyvsp[0].sv_int);
     }
-#line 2515 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2523 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 105: /* opt_limit_clause: %empty  */
-#line 580 "/home/lx/rmdb/src/parser/yacc.y"
+  case 106: /* opt_limit_clause: %empty  */
+#line 584 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
     {
         (yyval.sv_int) = -1;
     }
-#line 2523 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2531 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 106: /* opt_asc_desc: ASC  */
-#line 586 "/home/lx/rmdb/src/parser/yacc.y"
+  case 107: /* opt_asc_desc: ASC  */
+#line 590 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
                  { (yyval.sv_orderby_dir) = OrderBy_ASC;     }
-#line 2529 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2537 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 107: /* opt_asc_desc: DESC  */
-#line 587 "/home/lx/rmdb/src/parser/yacc.y"
+  case 108: /* opt_asc_desc: DESC  */
+#line 591 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
                  { (yyval.sv_orderby_dir) = OrderBy_DESC;    }
-#line 2535 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2543 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 108: /* opt_asc_desc: %empty  */
-#line 588 "/home/lx/rmdb/src/parser/yacc.y"
+  case 109: /* opt_asc_desc: %empty  */
+#line 592 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
             { (yyval.sv_orderby_dir) = OrderBy_DEFAULT; }
-#line 2541 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2549 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 109: /* set_knob_type: ENABLE_NESTLOOP  */
-#line 592 "/home/lx/rmdb/src/parser/yacc.y"
+  case 110: /* set_knob_type: ENABLE_NESTLOOP  */
+#line 596 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
                     { (yyval.sv_setKnobType) = EnableNestLoop; }
-#line 2547 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2555 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
-  case 110: /* set_knob_type: ENABLE_SORTMERGE  */
-#line 593 "/home/lx/rmdb/src/parser/yacc.y"
+  case 111: /* set_knob_type: ENABLE_SORTMERGE  */
+#line 597 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
                          { (yyval.sv_setKnobType) = EnableSortMerge; }
-#line 2553 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2561 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
     break;
 
 
-#line 2557 "/home/lx/rmdb/src/parser/yacc.tab.cpp"
+#line 2565 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.tab.cpp"
 
       default: break;
     }
@@ -2782,5 +2790,5 @@ yyreturnlab:
   return yyresult;
 }
 
-#line 599 "/home/lx/rmdb/src/parser/yacc.y"
+#line 603 "/mnt/d/study/数据库系统/比赛/submit-rmdb/src/parser/yacc.y"
 

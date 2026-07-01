@@ -361,6 +361,16 @@ std::shared_ptr<Plan> Planner::generate_select_plan(std::shared_ptr<Query> query
     return plannerRoot;
 }
 
+std::shared_ptr<Plan> Planner::generate_union_plan(std::shared_ptr<Query> query, Context *context) {
+    std::vector<std::shared_ptr<Plan>> branch_plans;
+    branch_plans.reserve(query->union_branches.size());
+    for (auto &branch : query->union_branches) {
+        branch_plans.push_back(generate_select_plan(std::move(branch), context));
+    }
+    return std::make_shared<UnionPlan>(T_Union, std::move(branch_plans), query->order_bys,
+                                       query->has_limit, query->limit, query->union_alias);
+}
+
 namespace {
 
 std::set<std::string> condition_tables(const Condition &cond) {
@@ -742,6 +752,10 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
         plannerRoot = std::make_shared<DMLPlan>(T_Update, table_scan_executors, x->tab_name,
                                                      std::vector<Value>(), query->conds,
                                                      query->set_clauses);
+    } else if (auto x = std::dynamic_pointer_cast<ast::UnionStmt>(query->parse)) {
+        std::shared_ptr<Plan> union_plan = generate_union_plan(std::move(query), context);
+        plannerRoot = std::make_shared<DMLPlan>(T_select, union_plan, std::string(), std::vector<Value>(),
+                                                std::vector<Condition>(), std::vector<SetClause>());
     } else if (auto x = std::dynamic_pointer_cast<ast::SelectStmt>(query->parse)) {
 
         std::shared_ptr<plannerInfo> root = std::make_shared<plannerInfo>(x);

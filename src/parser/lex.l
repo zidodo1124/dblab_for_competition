@@ -100,11 +100,12 @@ single_op ";"|"("|")"|","|"*"|"="|">"|"<"|"."|"+"
 "SUM" { return SUM; }
 "AVG" { return AVG; }
 "LIMIT" { return LIMIT; }
+"UNION" { return UNION; }
 "ENABLE_NESTLOOP" { return ENABLE_NESTLOOP; }
 "ENABLE_SORTMERGE" { return ENABLE_SORTMERGE; }
-"TRUE" { 
+"TRUE" {
     yylval->sv_bool = true;
-    return VALUE_BOOL; 
+    return VALUE_BOOL;
 }
 "FALSE" {
     yylval->sv_bool = false;

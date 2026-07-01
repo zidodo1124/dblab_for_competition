@@ -207,6 +207,20 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
             }
         }
         check_clause(query->tables, query->conds);
+    } else if (auto x = std::dynamic_pointer_cast<ast::UnionStmt>(parse)) {
+        query->is_union = true;
+        query->union_alias = x->alias;
+        query->has_limit = x->has_limit;
+        query->limit = x->limit;
+        for (auto &sv_order : x->order_items) {
+            OrderByItem item;
+            item.col = {.tab_name = sv_order->cols->tab_name, .col_name = sv_order->cols->col_name};
+            item.is_desc = sv_order->orderby_dir == ast::OrderBy_DESC;
+            query->order_bys.push_back(std::move(item));
+        }
+        for (auto &branch : x->branches) {
+            query->union_branches.push_back(do_analyze(branch));
+        }
     } else if (auto x = std::dynamic_pointer_cast<ast::UpdateStmt>(parse)) {
         TabMeta &tab = sm_manager_->db_.get_table(x->tab_name);
         std::vector<ColMeta> all_cols;

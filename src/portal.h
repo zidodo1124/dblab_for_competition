@@ -25,6 +25,7 @@ See the Mulan PSL v2 for more details. */
 #include "execution/executor_delete.h"
 #include "execution/executor_aggregate.h"
 #include "execution/executor_limit.h"
+#include "execution/executor_union.h"
 #include "execution/execution_sort.h"
 #include "common/common.h"
 
@@ -204,6 +205,14 @@ class Portal
             return std::make_unique<AggregateExecutor>(convert_plan_executor(x->subplan_, context),
                                                        x->select_items_, x->group_cols_, x->having_conds_,
                                                        x->order_bys_, x->has_limit_, x->limit_);
+        } else if(auto x = std::dynamic_pointer_cast<UnionPlan>(plan)) {
+            std::vector<std::unique_ptr<AbstractExecutor>> children;
+            children.reserve(x->subplans_.size());
+            for (auto &subplan : x->subplans_) {
+                children.push_back(convert_plan_executor(subplan, context));
+            }
+            return std::make_unique<UnionExecutor>(std::move(children), x->order_bys_, x->has_limit_,
+                                                   x->limit_, x->alias_);
         } else if(auto x = std::dynamic_pointer_cast<LimitPlan>(plan)) {
             return std::make_unique<LimitExecutor>(convert_plan_executor(x->subplan_, context), x->limit_);
         }

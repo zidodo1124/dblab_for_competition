@@ -52,6 +52,7 @@ class Planner {
     std::shared_ptr<Plan> generate_sort_plan(std::shared_ptr<Query> query, std::shared_ptr<Plan> plan);
 
     std::shared_ptr<Plan> generate_select_plan(std::shared_ptr<Query> query, Context *context);
+    std::shared_ptr<Plan> generate_union_plan(std::shared_ptr<Query> query, Context *context);
     std::shared_ptr<Plan> generate_explain_analyze_plan(std::shared_ptr<Query> query, Context *context);
 
 

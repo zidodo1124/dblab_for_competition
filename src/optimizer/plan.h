@@ -52,7 +52,8 @@ typedef enum PlanTag{
     T_Filter,
     T_Projection,
     T_Aggregate,
-    T_Limit
+    T_Limit,
+    T_Union
 } PlanTag;
 
 // 查询执行计划
@@ -219,6 +220,27 @@ class AggregatePlan : public Plan
         std::vector<OrderByItem> order_bys_;
         bool has_limit_;
         int limit_;
+};
+
+class UnionPlan : public Plan
+{
+    public:
+        UnionPlan(PlanTag tag, std::vector<std::shared_ptr<Plan>> subplans,
+                  std::vector<OrderByItem> order_bys, bool has_limit, int limit, std::string alias)
+        {
+            Plan::tag = tag;
+            subplans_ = std::move(subplans);
+            order_bys_ = std::move(order_bys);
+            has_limit_ = has_limit;
+            limit_ = limit;
+            alias_ = std::move(alias);
+        }
+        ~UnionPlan(){}
+        std::vector<std::shared_ptr<Plan>> subplans_;
+        std::vector<OrderByItem> order_bys_;
+        bool has_limit_;
+        int limit_;
+        std::string alias_;
 };
 
 // dml语句，包括insert; delete; update; select语句　

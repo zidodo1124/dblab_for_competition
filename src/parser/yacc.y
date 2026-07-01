@@ -24,7 +24,7 @@ using namespace ast;
 %token SHOW TABLES CREATE TABLE DROP DESC INSERT INTO VALUES DELETE FROM ASC ORDER BY
 WHERE UPDATE SET SELECT INT CHAR FLOAT INDEX AND JOIN EXIT HELP TXN_BEGIN TXN_COMMIT TXN_ABORT TXN_ROLLBACK ORDER_BY ENABLE_NESTLOOP ENABLE_SORTMERGE STATIC_CHECKPOINT
 TRANSACTION ISOLATION LEVEL SNAPSHOT SERIALIZABLE
-GROUP HAVING AS COUNT MAX MIN SUM AVG LIMIT
+GROUP HAVING AS COUNT MAX MIN SUM AVG LIMIT UNION
 // non-keywords
 %token LEQ NEQ GEQ T_EOF
 
@@ -36,6 +36,8 @@ GROUP HAVING AS COUNT MAX MIN SUM AVG LIMIT
 
 // specify types for non-terminal symbol
 %type <sv_node> stmt dbStmt ddl dml txnStmt setStmt
+%type <sv_select_stmt> select_stmt
+%type <sv_select_stmts> union_query
 %type <sv_field> field
 %type <sv_fields> fieldList
 %type <sv_type_len> type
@@ -176,9 +178,31 @@ dml:
     {
         $$ = std::make_shared<UpdateStmt>($2, $4, $5);
     }
-    |   SELECT selector FROM tableList optWhereClause opt_group_clause opt_having_clause opt_order_clause opt_limit_clause
+    |   select_stmt
+    {
+        $$ = $1;
+    }
+    |   SELECT '*' FROM '(' union_query ')' AS tbName opt_order_clause opt_limit_clause
+    {
+        $$ = std::make_shared<UnionStmt>($5, $8, $9, $10 >= 0, $10);
+    }
+    ;
+
+select_stmt:
+        SELECT selector FROM tableList optWhereClause opt_group_clause opt_having_clause opt_order_clause opt_limit_clause
     {
         $$ = std::make_shared<SelectStmt>($2, $4, $5, $6, $7, $8, $9 >= 0, $9);
+    }
+    ;
+
+union_query:
+        select_stmt UNION select_stmt
+    {
+        $$ = std::vector<std::shared_ptr<SelectStmt>>{$1, $3};
+    }
+    |   union_query UNION select_stmt
+    {
+        $$.push_back($3);
     }
     ;
 

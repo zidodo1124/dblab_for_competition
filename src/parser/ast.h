@@ -328,6 +328,22 @@ struct SelectStmt : public TreeNode {
             }
 };
 
+struct UnionStmt : public TreeNode {
+    std::vector<std::shared_ptr<SelectStmt>> branches;
+    std::string alias;
+    std::vector<std::shared_ptr<OrderBy>> order_items;
+    bool has_limit = false;
+    int limit = 0;
+
+    UnionStmt(std::vector<std::shared_ptr<SelectStmt>> branches_,
+              std::string alias_,
+              std::vector<std::shared_ptr<OrderBy>> order_items_,
+              bool has_limit_,
+              int limit_) :
+            branches(std::move(branches_)), alias(std::move(alias_)),
+            order_items(std::move(order_items_)), has_limit(has_limit_), limit(limit_) {}
+};
+
 // set enable_nestloop
 struct SetStmt : public TreeNode {
     SetKnobType set_knob_type_;
@@ -353,6 +369,8 @@ struct SemValue {
     std::vector<std::string> sv_strs;
 
     std::shared_ptr<TreeNode> sv_node;
+    std::shared_ptr<SelectStmt> sv_select_stmt;
+    std::vector<std::shared_ptr<SelectStmt>> sv_select_stmts;
 
     SvCompOp sv_comp_op;
 

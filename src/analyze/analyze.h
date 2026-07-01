@@ -36,6 +36,9 @@ class Query{
     bool has_aggregation = false;
     bool has_limit = false;
     int limit = 0;
+    bool is_union = false;
+    std::vector<std::shared_ptr<Query>> union_branches;
+    std::string union_alias;
     // 表名
     std::vector<std::string> tables;
     std::map<std::string, std::string> table_real_names;

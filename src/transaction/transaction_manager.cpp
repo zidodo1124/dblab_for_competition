@@ -581,3 +581,29 @@ void TransactionManager::cleanup_abort(Transaction *txn) {
         entry.second.erase(txn_id);
     }
 }
+
+void TransactionManager::clear_table_versions(const std::string &tab_name) {
+    std::lock_guard<std::mutex> lock(mvcc_latch_);
+    const std::string prefix = tab_name + "#";
+    for (auto it = versions_.begin(); it != versions_.end();) {
+        if (it->first.rfind(prefix, 0) == 0) {
+            it = versions_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto &entry : ser_states_) {
+        auto &reads = entry.second.read_records;
+        for (auto it = reads.begin(); it != reads.end();) {
+            if (it->first == tab_name) {
+                it = reads.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        auto &predicates = entry.second.predicates;
+        predicates.erase(std::remove_if(predicates.begin(), predicates.end(),
+                                        [&](const PredicateRead &pred) { return pred.tab_name == tab_name; }),
+                         predicates.end());
+    }
+}

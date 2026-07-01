@@ -89,6 +89,7 @@ public:
     void check_ser_write(const std::string &tab_name, const Rid &rid, const RmRecord *old_record,
                          const RmRecord *new_record, Transaction *txn);
     void cleanup_abort(Transaction *txn);
+    void clear_table_versions(const std::string &tab_name);
     std::unique_lock<std::mutex> acquire_write_latch() { return std::unique_lock<std::mutex>(write_latch_); }
 
     /**

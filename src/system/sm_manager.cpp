@@ -19,6 +19,7 @@ See the Mulan PSL v2 for more details. */
 #include "record/rm.h"
 #include "record/rm_scan.h"
 #include "record_printer.h"
+#include "transaction/transaction_manager.h"
 
 /**
  * @description: 判断是否为一个文件夹
@@ -221,6 +222,9 @@ void SmManager::create_table(const std::string& tab_name, const std::vector<ColD
     if (db_.is_table(tab_name)) {
         throw TableExistsError(tab_name);
     }
+    if (context != nullptr && context->txn_mgr_ != nullptr) {
+        context->txn_mgr_->clear_table_versions(tab_name);
+    }
     // Create table meta
     int curr_offset = 0;
     TabMeta tab;
@@ -252,6 +256,9 @@ void SmManager::create_table(const std::string& tab_name, const std::vector<ColD
  */
 void SmManager::drop_table(const std::string& tab_name, Context* context) {
     TabMeta &tab = db_.get_table(tab_name);
+    if (context != nullptr && context->txn_mgr_ != nullptr) {
+        context->txn_mgr_->clear_table_versions(tab_name);
+    }
 
     for (auto &index : tab.indexes) {
         std::string index_name = ix_manager_->get_index_name(tab_name, index.cols);

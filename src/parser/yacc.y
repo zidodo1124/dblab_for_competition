@@ -182,7 +182,7 @@ dml:
     {
         $$ = $1;
     }
-    |   SELECT '*' FROM '(' union_query ')' AS tbName opt_order_clause opt_limit_clause
+    |   SELECT selector FROM '(' union_query ')' AS tbName opt_order_clause opt_limit_clause
     {
         $$ = std::make_shared<UnionStmt>($5, $8, $9, $10 >= 0, $10);
     }

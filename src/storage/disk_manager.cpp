@@ -32,9 +32,16 @@ void DiskManager::write_page(int fd, page_id_t page_no, const char *offset, int 
     if (lseek(fd, file_offset, SEEK_SET) == -1) {
         throw UnixError();
     }
-    ssize_t bytes_write = write(fd, offset, num_bytes);
-    if (bytes_write != num_bytes) {
-        throw InternalError("DiskManager::write_page Error");
+    int bytes_written = 0;
+    while (bytes_written < num_bytes) {
+        ssize_t ret = write(fd, offset + bytes_written, num_bytes - bytes_written);
+        if (ret < 0) {
+            throw UnixError();
+        }
+        if (ret == 0) {
+            throw InternalError("DiskManager::write_page Error");
+        }
+        bytes_written += ret;
     }
 }
 
@@ -50,9 +57,16 @@ void DiskManager::read_page(int fd, page_id_t page_no, char *offset, int num_byt
     if (lseek(fd, file_offset, SEEK_SET) == -1) {
         throw UnixError();
     }
-    ssize_t bytes_read = read(fd, offset, num_bytes);
-    if (bytes_read != num_bytes) {
-        throw InternalError("DiskManager::read_page Error");
+    int bytes_read = 0;
+    while (bytes_read < num_bytes) {
+        ssize_t ret = read(fd, offset + bytes_read, num_bytes - bytes_read);
+        if (ret < 0) {
+            throw UnixError();
+        }
+        if (ret == 0) {
+            throw InternalError("DiskManager::read_page Error");
+        }
+        bytes_read += ret;
     }
 }
 

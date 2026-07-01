@@ -318,9 +318,6 @@ void TransactionManager::check_insert_conflict(const std::string &tab_name, cons
     }
     std::lock_guard<std::mutex> lock(mvcc_latch_);
     const auto &tab = sm_manager_->db_.get_table(tab_name);
-    if (tab.indexes.empty()) {
-        return;
-    }
     for (auto &entry : versions_) {
         if (entry.first.rfind(tab_name + "#", 0) != 0 || entry.second.empty()) {
             continue;
@@ -337,13 +334,18 @@ void TransactionManager::check_insert_conflict(const std::string &tab_name, cons
         }
 
         bool same_logical_record = false;
-        for (auto &index : tab.indexes) {
-            auto lhs = make_index_key(record, index);
-            auto rhs = make_index_key(latest->record, index);
-            if (memcmp(lhs.data(), rhs.data(), index.col_tot_len) == 0) {
-                same_logical_record = true;
-                break;
+        if (!tab.indexes.empty()) {
+            for (auto &index : tab.indexes) {
+                auto lhs = make_index_key(record, index);
+                auto rhs = make_index_key(latest->record, index);
+                if (memcmp(lhs.data(), rhs.data(), index.col_tot_len) == 0) {
+                    same_logical_record = true;
+                    break;
+                }
             }
+        } else if (record.size == latest->record.size &&
+                   memcmp(record.data, latest->record.data, record.size) == 0) {
+            same_logical_record = true;
         }
 
         if (!same_logical_record) {

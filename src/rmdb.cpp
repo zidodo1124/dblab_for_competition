@@ -118,6 +118,10 @@ void sigint_handler(int signo) {
 // 判断当前正在执行的是显式事务还是单条SQL语句的事务，并更新事务ID
 void SetTransaction(txn_id_t *txn_id, Context *context, IsolationLevel session_isolation) {
     context->txn_ = txn_manager->get_transaction(*txn_id);
+    if (context->txn_ != nullptr && context->txn_->get_state() == TransactionState::ABORTED &&
+        context->txn_->get_txn_mode()) {
+        return;
+    }
     if(context->txn_ == nullptr || context->txn_->get_state() == TransactionState::COMMITTED ||
         context->txn_->get_state() == TransactionState::ABORTED) {
         context->txn_ = txn_manager->begin(nullptr, context->log_mgr_);
@@ -131,6 +135,11 @@ void execute_parse_tree(char *data_send, int &offset, txn_id_t *txn_id, Context 
     try {
         std::shared_ptr<Query> query = analyze->do_analyze(ast::parse_tree);
         std::shared_ptr<Plan> plan = optimizer->plan_query(query, context);
+        if (context->txn_ != nullptr && context->txn_->get_state() == TransactionState::ABORTED &&
+            context->txn_->get_txn_mode() && plan->tag != T_Transaction_commit &&
+            plan->tag != T_Transaction_rollback && plan->tag != T_Transaction_abort) {
+            return;
+        }
         std::shared_ptr<PortalStmt> portalStmt = portal->start(plan, context);
         portal->run(portalStmt, ql_manager.get(), txn_id, context);
         portal->drop();

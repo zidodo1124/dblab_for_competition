@@ -108,7 +108,7 @@ class UpdateExecutor : public AbstractExecutor {
             }
         }
 
-        if (context_->txn_mgr_ != nullptr && !tab_.indexes.empty()) {
+        if (context_->txn_mgr_ != nullptr) {
             for (auto &new_rec : new_recs) {
                 context_->txn_mgr_->check_insert_conflict(tab_name_, new_rec, context_->txn_);
             }

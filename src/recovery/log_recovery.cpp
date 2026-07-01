@@ -11,71 +11,149 @@ See the Mulan PSL v2 for more details. */
 #include "log_recovery.h"
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
-#include <memory>
-#include <set>
+#include <string>
+#include <string_view>
+#include <unordered_set>
 
 #include "index/ix.h"
 
 namespace {
 
-std::string table_name_from_log(const char *name, size_t size) {
-    return std::string(name, size);
+template <typename T>
+T read_field(const char *data) {
+    T value;
+    memcpy(&value, data, sizeof(T));
+    return value;
 }
 
-std::unique_ptr<LogRecord> parse_log_record(const char *data) {
-    LogType type = *reinterpret_cast<const LogType *>(data + OFFSET_LOG_TYPE);
-    std::unique_ptr<LogRecord> record;
-    switch (type) {
-        case LogType::begin: record = std::make_unique<BeginLogRecord>(); break;
-        case LogType::commit: record = std::make_unique<CommitLogRecord>(); break;
-        case LogType::ABORT: record = std::make_unique<AbortLogRecord>(); break;
-        case LogType::INSERT: record = std::make_unique<InsertLogRecord>(); break;
-        case LogType::DELETE: record = std::make_unique<DeleteLogRecord>(); break;
-        case LogType::UPDATE: record = std::make_unique<UpdateLogRecord>(); break;
-        case LogType::CHECKPOINT: record = std::make_unique<CheckpointLogRecord>(); break;
+template <typename T>
+bool read_field(const char *&pos, const char *end, T &value) {
+    if (end - pos < static_cast<int>(sizeof(T))) {
+        return false;
     }
-    record->deserialize(data);
-    return record;
+    value = read_field<T>(pos);
+    pos += sizeof(T);
+    return true;
 }
 
-std::vector<char> make_index_key(const RmRecord &rec, const IndexMeta &index) {
+struct LogRecordView {
+    LogType type;
+    uint32_t len;
+    txn_id_t tid;
+    const char *data;
+};
+
+struct RecordSlice {
+    int size;
+    const char *data;
+};
+
+struct RecordLogView {
+    RecordSlice record;
+    Rid rid;
+    std::string_view table;
+};
+
+struct UpdateLogView {
+    RecordSlice old_record;
+    RecordSlice new_record;
+    Rid rid;
+    std::string_view table;
+};
+
+bool read_log_view(const std::vector<char> &log_data, int offset, LogRecordView &view) {
+    int data_size = static_cast<int>(log_data.size());
+    if (offset < 0 || offset + LOG_HEADER_SIZE > data_size) {
+        return false;
+    }
+    const char *base = log_data.data() + offset;
+    uint32_t len = read_field<uint32_t>(base + OFFSET_LOG_TOT_LEN);
+    if (len < LOG_HEADER_SIZE || len > static_cast<uint32_t>(data_size - offset)) {
+        return false;
+    }
+    view.type = read_field<LogType>(base + OFFSET_LOG_TYPE);
+    view.len = len;
+    view.tid = read_field<txn_id_t>(base + OFFSET_LOG_TID);
+    view.data = base;
+    return true;
+}
+
+bool read_record_slice(const char *&pos, const char *end, RecordSlice &record) {
+    int record_size = 0;
+    if (!read_field(pos, end, record_size)) {
+        return false;
+    }
+    if (record_size < 0 || end - pos < record_size) {
+        return false;
+    }
+    record.size = record_size;
+    record.data = pos;
+    pos += record_size;
+    return true;
+}
+
+bool read_table_name(const char *&pos, const char *end, std::string_view &table) {
+    size_t table_size = 0;
+    if (!read_field(pos, end, table_size)) {
+        return false;
+    }
+    if (static_cast<size_t>(end - pos) < table_size) {
+        return false;
+    }
+    table = std::string_view(pos, table_size);
+    pos += table_size;
+    return true;
+}
+
+bool parse_record_log(const LogRecordView &view, RecordLogView &record_log) {
+    const char *pos = view.data + OFFSET_LOG_DATA;
+    const char *end = view.data + view.len;
+    return read_record_slice(pos, end, record_log.record) &&
+           read_field(pos, end, record_log.rid) &&
+           read_table_name(pos, end, record_log.table);
+}
+
+bool parse_update_log(const LogRecordView &view, UpdateLogView &update_log) {
+    const char *pos = view.data + OFFSET_LOG_DATA;
+    const char *end = view.data + view.len;
+    return read_record_slice(pos, end, update_log.old_record) &&
+           read_record_slice(pos, end, update_log.new_record) &&
+           read_field(pos, end, update_log.rid) &&
+           read_table_name(pos, end, update_log.table);
+}
+
+std::string table_name_from_view(std::string_view table) {
+    return std::string(table.data(), table.size());
+}
+
+std::vector<char> make_index_key(const char *record_data, const IndexMeta &index) {
     std::vector<char> key(index.col_tot_len);
     int offset = 0;
     for (int i = 0; i < index.col_num; ++i) {
-        memcpy(key.data() + offset, rec.data + index.cols[i].offset, index.cols[i].len);
+        memcpy(key.data() + offset, record_data + index.cols[i].offset, index.cols[i].len);
         offset += index.cols[i].len;
     }
     return key;
 }
 
-bool record_exists(RmFileHandle *fh, const Rid &rid) {
-    try {
-        return fh->is_record(rid);
-    } catch (...) {
-        return false;
-    }
-}
-
-void insert_index_entries(SmManager *sm_manager, const std::string &tab_name, const RmRecord &rec, const Rid &rid,
+void insert_index_entries(SmManager *sm_manager, const std::string &tab_name, const char *record_data, const Rid &rid,
                           Transaction *txn = nullptr) {
     auto &tab = sm_manager->db_.get_table(tab_name);
     for (auto &index : tab.indexes) {
         auto ih = sm_manager->ihs_.at(sm_manager->get_ix_manager()->get_index_name(tab_name, index.cols)).get();
-        auto key = make_index_key(rec, index);
-        std::vector<Rid> existing;
-        if (!ih->get_value(key.data(), &existing, txn)) {
-            ih->insert_entry(key.data(), rid, txn);
-        }
+        auto key = make_index_key(record_data, index);
+        ih->insert_entry(key.data(), rid, txn);
     }
 }
 
-void delete_index_entries(SmManager *sm_manager, const std::string &tab_name, const RmRecord &rec,
+void delete_index_entries(SmManager *sm_manager, const std::string &tab_name, const char *record_data,
                           Transaction *txn = nullptr) {
     auto &tab = sm_manager->db_.get_table(tab_name);
     for (auto &index : tab.indexes) {
         auto ih = sm_manager->ihs_.at(sm_manager->get_ix_manager()->get_index_name(tab_name, index.cols)).get();
-        auto key = make_index_key(rec, index);
+        auto key = make_index_key(record_data, index);
         ih->delete_entry(key.data(), txn);
     }
 }
@@ -87,80 +165,110 @@ void delete_index_entries(SmManager *sm_manager, const std::string &tab_name, co
  */
 void RecoveryManager::analyze() {
     buffer_.offset_ = 0;
+    log_data_.clear();
+    log_record_offsets_.clear();
+    committed_txns_.clear();
+    loser_txns_.clear();
+
     int offset = 0;
     std::ifstream restart("restart.ckpt");
     if (restart.good()) {
         restart >> offset;
     }
     int file_size = disk_manager_->get_file_size(LOG_FILE_NAME);
-    if (file_size <= offset) {
+    if (file_size <= 0 || offset < 0 || file_size <= offset) {
+        return;
+    }
+
+    log_data_.assign(file_size - offset, 0);
+    int bytes_read = disk_manager_->read_log(log_data_.data(), static_cast<int>(log_data_.size()), offset);
+    if (bytes_read <= 0) {
         log_data_.clear();
         return;
     }
-    log_data_.assign(file_size - offset, 0);
-    int bytes_read = disk_manager_->read_log(log_data_.data(), static_cast<int>(log_data_.size()), offset);
     if (bytes_read < static_cast<int>(log_data_.size())) {
         log_data_.resize(std::max(0, bytes_read));
     }
+
+    std::unordered_set<txn_id_t> active_txns;
+    active_txns.reserve(log_data_.size() / LOG_HEADER_SIZE + 1);
+    committed_txns_.reserve(active_txns.bucket_count());
+    int log_offset = 0;
+    while (true) {
+        LogRecordView view{};
+        if (!read_log_view(log_data_, log_offset, view)) {
+            break;
+        }
+
+        log_record_offsets_.push_back(log_offset);
+        switch (view.type) {
+            case LogType::begin:
+                active_txns.insert(view.tid);
+                break;
+            case LogType::commit:
+                active_txns.erase(view.tid);
+                committed_txns_.insert(view.tid);
+                break;
+            case LogType::ABORT:
+                active_txns.erase(view.tid);
+                break;
+            default:
+                break;
+        }
+        log_offset += static_cast<int>(view.len);
+    }
+
+    loser_txns_ = std::move(active_txns);
 }
 
 /**
  * @description: 重做所有未落盘的操作
  */
 void RecoveryManager::redo() {
-    std::set<txn_id_t> active;
-    std::set<txn_id_t> committed;
-    int offset = 0;
-    while (offset + LOG_HEADER_SIZE <= static_cast<int>(log_data_.size())) {
-        auto len = *reinterpret_cast<uint32_t *>(log_data_.data() + offset + OFFSET_LOG_TOT_LEN);
-        if (len == 0 || offset + static_cast<int>(len) > static_cast<int>(log_data_.size())) {
-            break;
+    for (int offset : log_record_offsets_) {
+        LogRecordView view{};
+        if (!read_log_view(log_data_, offset, view) || committed_txns_.count(view.tid) == 0) {
+            continue;
         }
-        auto record = parse_log_record(log_data_.data() + offset);
-        if (record->log_type_ == LogType::begin) {
-            active.insert(record->log_tid_);
-        } else if (record->log_type_ == LogType::commit) {
-            active.erase(record->log_tid_);
-            committed.insert(record->log_tid_);
-        } else if (record->log_type_ == LogType::ABORT) {
-            active.erase(record->log_tid_);
-        }
-        offset += static_cast<int>(len);
-    }
 
-    offset = 0;
-    while (offset + LOG_HEADER_SIZE <= static_cast<int>(log_data_.size())) {
-        auto len = *reinterpret_cast<uint32_t *>(log_data_.data() + offset + OFFSET_LOG_TOT_LEN);
-        if (len == 0 || offset + static_cast<int>(len) > static_cast<int>(log_data_.size())) {
-            break;
-        }
-        auto record = parse_log_record(log_data_.data() + offset);
-        if (committed.count(record->log_tid_) > 0) {
-            if (auto insert_log = dynamic_cast<InsertLogRecord *>(record.get())) {
-                std::string tab_name = table_name_from_log(insert_log->table_name_, insert_log->table_name_size_);
-                auto fh = sm_manager_->fhs_.at(tab_name).get();
-                if (!record_exists(fh, insert_log->rid_)) {
-                    fh->insert_record(insert_log->rid_, insert_log->insert_value_.data);
-                    insert_index_entries(sm_manager_, tab_name, insert_log->insert_value_, insert_log->rid_);
-                }
-            } else if (auto delete_log = dynamic_cast<DeleteLogRecord *>(record.get())) {
-                std::string tab_name = table_name_from_log(delete_log->table_name_, delete_log->table_name_size_);
-                auto fh = sm_manager_->fhs_.at(tab_name).get();
-                if (record_exists(fh, delete_log->rid_)) {
-                    delete_index_entries(sm_manager_, tab_name, delete_log->delete_value_);
-                    fh->delete_record(delete_log->rid_, nullptr);
-                }
-            } else if (auto update_log = dynamic_cast<UpdateLogRecord *>(record.get())) {
-                std::string tab_name = table_name_from_log(update_log->table_name_, update_log->table_name_size_);
-                auto fh = sm_manager_->fhs_.at(tab_name).get();
-                if (record_exists(fh, update_log->rid_)) {
-                    delete_index_entries(sm_manager_, tab_name, update_log->old_value_);
-                    fh->update_record(update_log->rid_, update_log->new_value_.data, nullptr);
-                    insert_index_entries(sm_manager_, tab_name, update_log->new_value_, update_log->rid_);
-                }
+        if (view.type == LogType::INSERT) {
+            RecordLogView insert_log{};
+            if (!parse_record_log(view, insert_log)) {
+                continue;
+            }
+            std::string tab_name = table_name_from_view(insert_log.table);
+            auto fh = sm_manager_->fhs_.at(tab_name).get();
+            try {
+                fh->insert_record(insert_log.rid, const_cast<char *>(insert_log.record.data));
+            } catch (...) {
+            }
+            insert_index_entries(sm_manager_, tab_name, insert_log.record.data, insert_log.rid);
+        } else if (view.type == LogType::DELETE) {
+            RecordLogView delete_log{};
+            if (!parse_record_log(view, delete_log)) {
+                continue;
+            }
+            std::string tab_name = table_name_from_view(delete_log.table);
+            auto fh = sm_manager_->fhs_.at(tab_name).get();
+            delete_index_entries(sm_manager_, tab_name, delete_log.record.data);
+            try {
+                fh->delete_record(delete_log.rid, nullptr);
+            } catch (...) {
+            }
+        } else if (view.type == LogType::UPDATE) {
+            UpdateLogView update_log{};
+            if (!parse_update_log(view, update_log)) {
+                continue;
+            }
+            std::string tab_name = table_name_from_view(update_log.table);
+            auto fh = sm_manager_->fhs_.at(tab_name).get();
+            delete_index_entries(sm_manager_, tab_name, update_log.old_record.data);
+            try {
+                fh->update_record(update_log.rid, const_cast<char *>(update_log.new_record.data), nullptr);
+                insert_index_entries(sm_manager_, tab_name, update_log.new_record.data, update_log.rid);
+            } catch (...) {
             }
         }
-        offset += static_cast<int>(len);
     }
 }
 
@@ -168,52 +276,48 @@ void RecoveryManager::redo() {
  * @description: 回滚未完成的事务
  */
 void RecoveryManager::undo() {
-    std::set<txn_id_t> active;
-    std::set<txn_id_t> committed_or_aborted;
-    std::vector<std::unique_ptr<LogRecord>> records;
-    int offset = 0;
-    while (offset + LOG_HEADER_SIZE <= static_cast<int>(log_data_.size())) {
-        auto len = *reinterpret_cast<uint32_t *>(log_data_.data() + offset + OFFSET_LOG_TOT_LEN);
-        if (len == 0 || offset + static_cast<int>(len) > static_cast<int>(log_data_.size())) {
-            break;
-        }
-        auto record = parse_log_record(log_data_.data() + offset);
-        if (record->log_type_ == LogType::begin) {
-            active.insert(record->log_tid_);
-        } else if (record->log_type_ == LogType::commit || record->log_type_ == LogType::ABORT) {
-            active.erase(record->log_tid_);
-            committed_or_aborted.insert(record->log_tid_);
-        }
-        records.push_back(std::move(record));
-        offset += static_cast<int>(len);
-    }
-
-    for (auto it = records.rbegin(); it != records.rend(); ++it) {
-        auto &record = *it;
-        if (active.count(record->log_tid_) == 0) {
+    for (auto it = log_record_offsets_.rbegin(); it != log_record_offsets_.rend(); ++it) {
+        LogRecordView view{};
+        if (!read_log_view(log_data_, *it, view) || loser_txns_.count(view.tid) == 0) {
             continue;
         }
-        if (auto insert_log = dynamic_cast<InsertLogRecord *>(record.get())) {
-            std::string tab_name = table_name_from_log(insert_log->table_name_, insert_log->table_name_size_);
-            auto fh = sm_manager_->fhs_.at(tab_name).get();
-            if (record_exists(fh, insert_log->rid_)) {
-                delete_index_entries(sm_manager_, tab_name, insert_log->insert_value_);
-                fh->delete_record(insert_log->rid_, nullptr);
+
+        if (view.type == LogType::INSERT) {
+            RecordLogView insert_log{};
+            if (!parse_record_log(view, insert_log)) {
+                continue;
             }
-        } else if (auto delete_log = dynamic_cast<DeleteLogRecord *>(record.get())) {
-            std::string tab_name = table_name_from_log(delete_log->table_name_, delete_log->table_name_size_);
+            std::string tab_name = table_name_from_view(insert_log.table);
             auto fh = sm_manager_->fhs_.at(tab_name).get();
-            if (!record_exists(fh, delete_log->rid_)) {
-                fh->insert_record(delete_log->rid_, delete_log->delete_value_.data);
-                insert_index_entries(sm_manager_, tab_name, delete_log->delete_value_, delete_log->rid_);
+            delete_index_entries(sm_manager_, tab_name, insert_log.record.data);
+            try {
+                fh->delete_record(insert_log.rid, nullptr);
+            } catch (...) {
             }
-        } else if (auto update_log = dynamic_cast<UpdateLogRecord *>(record.get())) {
-            std::string tab_name = table_name_from_log(update_log->table_name_, update_log->table_name_size_);
+        } else if (view.type == LogType::DELETE) {
+            RecordLogView delete_log{};
+            if (!parse_record_log(view, delete_log)) {
+                continue;
+            }
+            std::string tab_name = table_name_from_view(delete_log.table);
             auto fh = sm_manager_->fhs_.at(tab_name).get();
-            if (record_exists(fh, update_log->rid_)) {
-                delete_index_entries(sm_manager_, tab_name, update_log->new_value_);
-                fh->update_record(update_log->rid_, update_log->old_value_.data, nullptr);
-                insert_index_entries(sm_manager_, tab_name, update_log->old_value_, update_log->rid_);
+            try {
+                fh->insert_record(delete_log.rid, const_cast<char *>(delete_log.record.data));
+            } catch (...) {
+            }
+            insert_index_entries(sm_manager_, tab_name, delete_log.record.data, delete_log.rid);
+        } else if (view.type == LogType::UPDATE) {
+            UpdateLogView update_log{};
+            if (!parse_update_log(view, update_log)) {
+                continue;
+            }
+            std::string tab_name = table_name_from_view(update_log.table);
+            auto fh = sm_manager_->fhs_.at(tab_name).get();
+            delete_index_entries(sm_manager_, tab_name, update_log.new_record.data);
+            try {
+                fh->update_record(update_log.rid, const_cast<char *>(update_log.old_record.data), nullptr);
+                insert_index_entries(sm_manager_, tab_name, update_log.old_record.data, update_log.rid);
+            } catch (...) {
             }
         }
     }

@@ -735,20 +735,23 @@ std::shared_ptr<Plan> build_join_plan_for_order(
 std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Query> query, Context *context) {
     std::map<std::string, std::vector<Condition>> local_conds;
     std::vector<Condition> join_conds;
+    std::vector<Condition> post_join_conds;
     std::vector<std::string> join_cond_right_tables;
-    size_t on_cond_idx = 0;
     for (size_t cond_idx = 0; cond_idx < query->conds.size(); ++cond_idx) {
         const auto &cond = query->conds[cond_idx];
         std::string join_owner_table;
-        if (on_cond_idx < query->join_cond_right_tables.size()) {
-            join_owner_table = query->join_cond_right_tables[on_cond_idx++];
+        bool is_on_cond = cond_idx < query->join_cond_right_tables.size();
+        if (is_on_cond) {
+            join_owner_table = query->join_cond_right_tables[cond_idx];
         }
         auto tables = condition_tables(cond);
         if (tables.size() == 1) {
             local_conds[*tables.begin()].push_back(cond);
-        } else {
+        } else if (is_on_cond || !query->has_explicit_join) {
             join_conds.push_back(cond);
             join_cond_right_tables.push_back(join_owner_table);
+        } else {
+            post_join_conds.push_back(cond);
         }
     }
 
@@ -759,6 +762,10 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
             add_col(pushed_cols[col.tab_name], col);
         }
         for (const auto &cond : join_conds) {
+            add_col(pushed_cols[cond.lhs_col.tab_name], cond.lhs_col);
+            add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
+        }
+        for (const auto &cond : post_join_conds) {
             add_col(pushed_cols[cond.lhs_col.tab_name], cond.lhs_col);
             add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
         }
@@ -811,6 +818,10 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
                                       sm_manager_, context);
     std::shared_ptr<Plan> root = build_join_plan_for_order(
         join_order, table_plans, join_conds, query->tab_display_names, join_cond_right_tables, true);
+    if (!post_join_conds.empty()) {
+        root = std::make_shared<FilterPlan>(T_Filter, std::move(root), post_join_conds,
+                                            query->tab_display_names);
+    }
     if (query->has_aggregation) {
         root = std::make_shared<AggregatePlan>(T_Aggregate, std::move(root), query->select_items, query->group_cols,
                                                query->having_conds, query->order_bys, query->has_limit,

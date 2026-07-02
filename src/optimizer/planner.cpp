@@ -456,19 +456,6 @@ TabCol resolve_query_col(const TabCol &target, const std::vector<std::string> &t
     return resolved;
 }
 
-bool keeps_all_table_cols(const std::vector<TabCol> &cols, const TabMeta &tab,
-                          const std::string &logical_tab_name) {
-    if (cols.size() != tab.cols.size()) {
-        return false;
-    }
-    for (const auto &col : tab.cols) {
-        if (!has_col(cols, {.tab_name = logical_tab_name, .col_name = col.name})) {
-            return false;
-        }
-    }
-    return true;
-}
-
 std::vector<TabCol> aggregate_output_cols(const std::vector<SelectItem> &select_items,
                                           const std::map<std::string, std::string> &display_names) {
     std::vector<TabCol> cols;
@@ -813,10 +800,8 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
                                                 query->tab_display_names);
         }
         if (push_project && !pushed_cols[tab_name].empty()) {
-            bool display_all = keeps_all_table_cols(pushed_cols[tab_name], sm_manager_->db_.get_table(real_table),
-                                                    tab_name);
             plan = std::make_shared<ProjectionPlan>(T_Projection, std::move(plan), pushed_cols[tab_name],
-                                                    display_all, query->tab_display_names);
+                                                    false, query->tab_display_names);
         }
         table_plans[tab_name] = std::move(plan);
     }

@@ -323,6 +323,38 @@ public:
         log_tid_ = INVALID_TXN_ID;
         prev_lsn_ = INVALID_LSN;
     }
+    explicit CheckpointLogRecord(std::vector<txn_id_t> active_txn_ids) : CheckpointLogRecord() {
+        active_txn_ids_ = std::move(active_txn_ids);
+        log_tot_len_ += sizeof(uint32_t) + active_txn_ids_.size() * sizeof(txn_id_t);
+    }
+
+    void serialize(char* dest) const override {
+        LogRecord::serialize(dest);
+        int offset = OFFSET_LOG_DATA;
+        uint32_t active_count = static_cast<uint32_t>(active_txn_ids_.size());
+        memcpy(dest + offset, &active_count, sizeof(uint32_t));
+        offset += sizeof(uint32_t);
+        if (active_count > 0) {
+            memcpy(dest + offset, active_txn_ids_.data(), active_count * sizeof(txn_id_t));
+        }
+    }
+
+    void deserialize(const char* src) override {
+        LogRecord::deserialize(src);
+        active_txn_ids_.clear();
+        if (log_tot_len_ <= LOG_HEADER_SIZE) {
+            return;
+        }
+        int offset = OFFSET_LOG_DATA;
+        uint32_t active_count = *reinterpret_cast<const uint32_t*>(src + offset);
+        offset += sizeof(uint32_t);
+        active_txn_ids_.resize(active_count);
+        if (active_count > 0) {
+            memcpy(active_txn_ids_.data(), src + offset, active_count * sizeof(txn_id_t));
+        }
+    }
+
+    std::vector<txn_id_t> active_txn_ids_;
 };
 
 /* 日志缓冲区，只有一个buffer，因此需要阻塞地去把日志写入缓冲区中 */

@@ -11,9 +11,9 @@ See the Mulan PSL v2 for more details. */
 #include "log_recovery.h"
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <memory>
-#include <set>
 
 #include "index/ix.h"
 
@@ -57,6 +57,24 @@ bool record_exists(RmFileHandle *fh, const Rid &rid) {
     }
 }
 
+std::vector<txn_id_t> checkpoint_active_txns(const char *data) {
+    auto len = *reinterpret_cast<const uint32_t *>(data + OFFSET_LOG_TOT_LEN);
+    if (len <= LOG_HEADER_SIZE) {
+        return {};
+    }
+    int offset = OFFSET_LOG_DATA;
+    auto active_count = *reinterpret_cast<const uint32_t *>(data + offset);
+    offset += sizeof(uint32_t);
+    if (offset + static_cast<int>(active_count * sizeof(txn_id_t)) > static_cast<int>(len)) {
+        return {};
+    }
+    std::vector<txn_id_t> active_txns(active_count);
+    if (active_count > 0) {
+        memcpy(active_txns.data(), data + offset, active_count * sizeof(txn_id_t));
+    }
+    return active_txns;
+}
+
 void insert_index_entries(SmManager *sm_manager, const std::string &tab_name, const RmRecord &rec, const Rid &rid,
                           Transaction *txn = nullptr) {
     auto &tab = sm_manager->db_.get_table(tab_name);
@@ -87,6 +105,10 @@ void delete_index_entries(SmManager *sm_manager, const std::string &tab_name, co
  */
 void RecoveryManager::analyze() {
     buffer_.offset_ = 0;
+    log_data_.clear();
+    data_logs_.clear();
+    undo_txns_.clear();
+    redo_txns_.clear();
     int offset = 0;
     std::ifstream restart("restart.ckpt");
     if (restart.good()) {
@@ -102,40 +124,40 @@ void RecoveryManager::analyze() {
     if (bytes_read < static_cast<int>(log_data_.size())) {
         log_data_.resize(std::max(0, bytes_read));
     }
+
+    int log_offset = 0;
+    while (log_offset + LOG_HEADER_SIZE <= static_cast<int>(log_data_.size())) {
+        auto len = *reinterpret_cast<uint32_t *>(log_data_.data() + log_offset + OFFSET_LOG_TOT_LEN);
+        if (len == 0 || log_offset + static_cast<int>(len) > static_cast<int>(log_data_.size())) {
+            break;
+        }
+        auto type = *reinterpret_cast<LogType *>(log_data_.data() + log_offset + OFFSET_LOG_TYPE);
+        auto tid = *reinterpret_cast<txn_id_t *>(log_data_.data() + log_offset + OFFSET_LOG_TID);
+        if (type == LogType::CHECKPOINT) {
+            undo_txns_.clear();
+            auto active_txns = checkpoint_active_txns(log_data_.data() + log_offset);
+            undo_txns_.insert(active_txns.begin(), active_txns.end());
+        } else if (type == LogType::begin) {
+            undo_txns_.insert(tid);
+        } else if (type == LogType::commit) {
+            undo_txns_.erase(tid);
+            redo_txns_.insert(tid);
+        } else if (type == LogType::ABORT) {
+            undo_txns_.erase(tid);
+        } else if (type == LogType::INSERT || type == LogType::DELETE || type == LogType::UPDATE) {
+            data_logs_.push_back({log_offset, len, type, tid});
+        }
+        log_offset += static_cast<int>(len);
+    }
 }
 
 /**
  * @description: 重做所有未落盘的操作
  */
 void RecoveryManager::redo() {
-    std::set<txn_id_t> active;
-    std::set<txn_id_t> committed;
-    int offset = 0;
-    while (offset + LOG_HEADER_SIZE <= static_cast<int>(log_data_.size())) {
-        auto len = *reinterpret_cast<uint32_t *>(log_data_.data() + offset + OFFSET_LOG_TOT_LEN);
-        if (len == 0 || offset + static_cast<int>(len) > static_cast<int>(log_data_.size())) {
-            break;
-        }
-        auto record = parse_log_record(log_data_.data() + offset);
-        if (record->log_type_ == LogType::begin) {
-            active.insert(record->log_tid_);
-        } else if (record->log_type_ == LogType::commit) {
-            active.erase(record->log_tid_);
-            committed.insert(record->log_tid_);
-        } else if (record->log_type_ == LogType::ABORT) {
-            active.erase(record->log_tid_);
-        }
-        offset += static_cast<int>(len);
-    }
-
-    offset = 0;
-    while (offset + LOG_HEADER_SIZE <= static_cast<int>(log_data_.size())) {
-        auto len = *reinterpret_cast<uint32_t *>(log_data_.data() + offset + OFFSET_LOG_TOT_LEN);
-        if (len == 0 || offset + static_cast<int>(len) > static_cast<int>(log_data_.size())) {
-            break;
-        }
-        auto record = parse_log_record(log_data_.data() + offset);
-        if (committed.count(record->log_tid_) > 0) {
+    for (const auto &log_ref : data_logs_) {
+        if (redo_txns_.count(log_ref.tid) > 0) {
+            auto record = parse_log_record(log_data_.data() + log_ref.offset);
             if (auto insert_log = dynamic_cast<InsertLogRecord *>(record.get())) {
                 std::string tab_name = table_name_from_log(insert_log->table_name_, insert_log->table_name_size_);
                 auto fh = sm_manager_->fhs_.at(tab_name).get();
@@ -160,7 +182,6 @@ void RecoveryManager::redo() {
                 }
             }
         }
-        offset += static_cast<int>(len);
     }
 }
 
@@ -168,31 +189,12 @@ void RecoveryManager::redo() {
  * @description: 回滚未完成的事务
  */
 void RecoveryManager::undo() {
-    std::set<txn_id_t> active;
-    std::set<txn_id_t> committed_or_aborted;
-    std::vector<std::unique_ptr<LogRecord>> records;
-    int offset = 0;
-    while (offset + LOG_HEADER_SIZE <= static_cast<int>(log_data_.size())) {
-        auto len = *reinterpret_cast<uint32_t *>(log_data_.data() + offset + OFFSET_LOG_TOT_LEN);
-        if (len == 0 || offset + static_cast<int>(len) > static_cast<int>(log_data_.size())) {
-            break;
-        }
-        auto record = parse_log_record(log_data_.data() + offset);
-        if (record->log_type_ == LogType::begin) {
-            active.insert(record->log_tid_);
-        } else if (record->log_type_ == LogType::commit || record->log_type_ == LogType::ABORT) {
-            active.erase(record->log_tid_);
-            committed_or_aborted.insert(record->log_tid_);
-        }
-        records.push_back(std::move(record));
-        offset += static_cast<int>(len);
-    }
-
-    for (auto it = records.rbegin(); it != records.rend(); ++it) {
-        auto &record = *it;
-        if (active.count(record->log_tid_) == 0) {
+    for (auto it = data_logs_.rbegin(); it != data_logs_.rend(); ++it) {
+        const auto &log_ref = *it;
+        if (undo_txns_.count(log_ref.tid) == 0) {
             continue;
         }
+        auto record = parse_log_record(log_data_.data() + log_ref.offset);
         if (auto insert_log = dynamic_cast<InsertLogRecord *>(record.get())) {
             std::string tab_name = table_name_from_log(insert_log->table_name_, insert_log->table_name_size_);
             auto fh = sm_manager_->fhs_.at(tab_name).get();

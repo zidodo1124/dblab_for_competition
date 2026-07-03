@@ -83,7 +83,8 @@ class InsertExecutor : public AbstractExecutor {
         rid_ = fh_->insert_record(rec.data, context_);
         if (context_->log_mgr_ != nullptr && context_->txn_ != nullptr) {
             InsertLogRecord log_record(context_->txn_->get_transaction_id(), rec, rid_, tab_name_);
-            context_->log_mgr_->add_log_record(&log_record, context_->txn_);
+            lsn_t lsn = context_->log_mgr_->add_log_record(&log_record, context_->txn_);
+            fh_->set_page_lsn(rid_.page_no, lsn);
         }
 
         // Insert into index

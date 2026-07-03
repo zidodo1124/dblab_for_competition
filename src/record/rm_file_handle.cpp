@@ -9,6 +9,7 @@ MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 See the Mulan PSL v2 for more details. */
 
 #include "rm_file_handle.h"
+#include "common/context.h"
 
 /**
  * @description: 获取当前表中记录号为rid的记录
@@ -99,6 +100,19 @@ void RmFileHandle::insert_record(const Rid& rid, char* buf) {
     buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), true);
 }
 
+lsn_t RmFileHandle::get_page_lsn(int page_no) const {
+    RmPageHandle page_handle = fetch_page_handle(page_no);
+    lsn_t lsn = page_handle.page->get_page_lsn();
+    buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), false);
+    return lsn;
+}
+
+void RmFileHandle::set_page_lsn(int page_no, lsn_t lsn) {
+    RmPageHandle page_handle = fetch_page_handle(page_no);
+    page_handle.page->set_page_lsn(lsn);
+    buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), true);
+}
+
 /**
  * @description: 删除记录文件中记录号为rid的记录
  * @param {Rid&} rid 要删除的记录的记录号（位置）
@@ -118,6 +132,9 @@ void RmFileHandle::delete_record(const Rid& rid, Context* context) {
     if (was_full) {
         release_page_handle(page_handle);
     }
+    if (context != nullptr && context->txn_ != nullptr) {
+        page_handle.page->set_page_lsn(context->txn_->get_prev_lsn());
+    }
     buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), true);
 }
 
@@ -136,6 +153,9 @@ void RmFileHandle::update_record(const Rid& rid, char* buf, Context* context) {
         throw RecordNotFoundError(rid.page_no, rid.slot_no);
     }
     memcpy(page_handle.get_slot(rid.slot_no), buf, file_hdr_.record_size);
+    if (context != nullptr && context->txn_ != nullptr) {
+        page_handle.page->set_page_lsn(context->txn_->get_prev_lsn());
+    }
     buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), true);
 }
 

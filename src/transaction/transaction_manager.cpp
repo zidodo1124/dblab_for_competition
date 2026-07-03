@@ -83,13 +83,21 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
     timestamp_t commit_ts = next_timestamp_++;
     {
         std::lock_guard<std::mutex> mvcc_lock(mvcc_latch_);
-        for (auto &entry : versions_) {
-            for (auto &version : entry.second) {
-                if (version.txn_id == txn->get_transaction_id() && !version.aborted) {
-                    version.committed = true;
-                    version.commit_ts = commit_ts;
+        auto written_it = txn_version_keys_.find(txn->get_transaction_id());
+        if (written_it != txn_version_keys_.end()) {
+            for (const auto &key : written_it->second) {
+                auto version_it = versions_.find(key);
+                if (version_it == versions_.end()) {
+                    continue;
+                }
+                for (auto &version : version_it->second) {
+                    if (version.txn_id == txn->get_transaction_id() && !version.aborted) {
+                        version.committed = true;
+                        version.commit_ts = commit_ts;
+                    }
                 }
             }
+            txn_version_keys_.erase(written_it);
         }
         auto &ser_state = ser_states_[txn->get_transaction_id()];
         ser_state.committed = true;
@@ -317,13 +325,23 @@ void TransactionManager::check_insert_conflict(const std::string &tab_name, cons
         return;
     }
     std::lock_guard<std::mutex> lock(mvcc_latch_);
-    const auto &tab = sm_manager_->db_.get_table(tab_name);
-    for (auto &entry : versions_) {
-        if (entry.first.rfind(tab_name + "#", 0) != 0 || entry.second.empty()) {
+    std::unordered_set<std::string> requested_conflict_keys;
+    std::unordered_set<std::string> candidate_keys;
+    for (const auto &conflict_key : build_conflict_keys(tab_name, record)) {
+        requested_conflict_keys.insert(conflict_key);
+        auto key_it = conflict_key_versions_.find(conflict_key);
+        if (key_it == conflict_key_versions_.end()) {
+            continue;
+        }
+        candidate_keys.insert(key_it->second.begin(), key_it->second.end());
+    }
+    for (const auto &version_key : candidate_keys) {
+        auto entry = versions_.find(version_key);
+        if (entry == versions_.end() || entry->second.empty()) {
             continue;
         }
         Version *latest = nullptr;
-        for (auto rit = entry.second.rbegin(); rit != entry.second.rend(); ++rit) {
+        for (auto rit = entry->second.rbegin(); rit != entry->second.rend(); ++rit) {
             if (!rit->aborted && !rit->old_image) {
                 latest = &(*rit);
                 break;
@@ -332,23 +350,14 @@ void TransactionManager::check_insert_conflict(const std::string &tab_name, cons
         if (latest == nullptr || latest->txn_id == txn->get_transaction_id()) {
             continue;
         }
-
-        bool same_logical_record = false;
-        if (!tab.indexes.empty()) {
-            for (auto &index : tab.indexes) {
-                auto lhs = make_index_key(record, index);
-                auto rhs = make_index_key(latest->record, index);
-                if (memcmp(lhs.data(), rhs.data(), index.col_tot_len) == 0) {
-                    same_logical_record = true;
-                    break;
-                }
+        bool still_matches = false;
+        for (const auto &latest_key : build_conflict_keys(tab_name, latest->record)) {
+            if (requested_conflict_keys.count(latest_key) > 0) {
+                still_matches = true;
+                break;
             }
-        } else if (record.size == latest->record.size &&
-                   memcmp(record.data, latest->record.data, record.size) == 0) {
-            same_logical_record = true;
         }
-
-        if (!same_logical_record) {
+        if (!still_matches) {
             continue;
         }
         if (!latest->committed || latest->commit_ts > txn->get_start_ts()) {
@@ -367,7 +376,9 @@ void TransactionManager::append_insert_version(const std::string &tab_name, cons
     version.rid = rid;
     version.record = record;
     version.txn_id = txn->get_transaction_id();
-    versions_[version_key(tab_name, rid)].push_back(version);
+    std::string key = version_key(tab_name, rid);
+    versions_[key].push_back(version);
+    remember_version_write(txn->get_transaction_id(), key, tab_name, record);
 }
 
 void TransactionManager::append_update_version(const std::string &tab_name, const Rid &rid,
@@ -392,6 +403,7 @@ void TransactionManager::append_update_version(const std::string &tab_name, cons
     version.record = new_record;
     version.txn_id = txn->get_transaction_id();
     list.push_back(version);
+    remember_version_write(txn->get_transaction_id(), version_key(tab_name, rid), tab_name, new_record);
 }
 
 void TransactionManager::append_delete_version(const std::string &tab_name, const Rid &rid,
@@ -416,6 +428,36 @@ void TransactionManager::append_delete_version(const std::string &tab_name, cons
     version.txn_id = txn->get_transaction_id();
     version.deleted = true;
     list.push_back(version);
+    remember_version_write(txn->get_transaction_id(), version_key(tab_name, rid), tab_name, old_record);
+}
+
+std::vector<std::string> TransactionManager::build_conflict_keys(const std::string &tab_name,
+                                                                 const RmRecord &record) const {
+    std::vector<std::string> keys;
+    const auto &tab = sm_manager_->db_.get_table(tab_name);
+    if (tab.indexes.empty()) {
+        std::string key = tab_name + "#record#";
+        key.append(record.data, record.size);
+        keys.push_back(std::move(key));
+        return keys;
+    }
+    keys.reserve(tab.indexes.size());
+    for (size_t i = 0; i < tab.indexes.size(); ++i) {
+        const auto &index = tab.indexes[i];
+        auto raw_key = make_index_key(record, index);
+        std::string key = tab_name + "#index#" + std::to_string(i) + "#";
+        key.append(raw_key.data(), raw_key.size());
+        keys.push_back(std::move(key));
+    }
+    return keys;
+}
+
+void TransactionManager::remember_version_write(txn_id_t txn_id, const std::string &version_key,
+                                                const std::string &tab_name, const RmRecord &record) {
+    txn_version_keys_[txn_id].push_back(version_key);
+    for (const auto &conflict_key : build_conflict_keys(tab_name, record)) {
+        conflict_key_versions_[conflict_key].push_back(version_key);
+    }
 }
 
 bool TransactionManager::record_matches(const std::string &tab_name, const std::vector<Condition> &conds,
@@ -477,23 +519,6 @@ void TransactionManager::record_select_predicate(const std::string &tab_name, co
     std::lock_guard<std::mutex> lock(mvcc_latch_);
     auto &state = ser_states_[txn->get_transaction_id()];
     state.predicates.push_back({tab_name, conds});
-    for (auto &entry : versions_) {
-        if (entry.first.rfind(tab_name + "#", 0) != 0) {
-            continue;
-        }
-        for (auto &version : entry.second) {
-            if (version.aborted || version.old_image || version.txn_id == txn->get_transaction_id()) {
-                continue;
-            }
-            bool invisible = !version.committed || version.commit_ts > txn->get_start_ts();
-            if (invisible && !version.deleted && record_matches(tab_name, conds, version.record) &&
-                txn_relevant_for_ser(version.txn_id, txn)) {
-                if (add_rw_edge(txn->get_transaction_id(), version.txn_id)) {
-                    throw TransactionAbortException(txn->get_transaction_id(), AbortReason::DEADLOCK_PREVENTION);
-                }
-            }
-        }
-    }
 }
 
 void TransactionManager::record_select_record(const std::string &tab_name, const Rid &rid, Transaction *txn) {
@@ -510,14 +535,25 @@ void TransactionManager::check_ser_write(const std::string &tab_name, const Rid 
         return;
     }
     std::lock_guard<std::mutex> lock(mvcc_latch_);
-    for (auto &entry : ser_states_) {
-        txn_id_t reader = entry.first;
-        if (reader == txn->get_transaction_id() || !txn_relevant_for_ser(reader, txn)) {
+    for (auto it = ser_states_.begin(); it != ser_states_.end();) {
+        txn_id_t reader = it->first;
+        auto &reader_state = it->second;
+        if (reader != txn->get_transaction_id() && reader_state.committed &&
+            reader_state.commit_ts <= txn->get_start_ts()) {
+            rw_edges_.erase(reader);
+            for (auto &edge_entry : rw_edges_) {
+                edge_entry.second.erase(reader);
+            }
+            it = ser_states_.erase(it);
             continue;
         }
-        bool hit = entry.second.read_records.count({tab_name, rid_key(rid)}) > 0;
+        if (reader == txn->get_transaction_id() || !txn_relevant_for_ser(reader, txn)) {
+            ++it;
+            continue;
+        }
+        bool hit = reader_state.read_records.count({tab_name, rid_key(rid)}) > 0;
         if (!hit) {
-            for (auto &pred : entry.second.predicates) {
+            for (auto &pred : reader_state.predicates) {
                 if (pred.tab_name != tab_name) {
                     continue;
                 }
@@ -531,6 +567,7 @@ void TransactionManager::check_ser_write(const std::string &tab_name, const Rid 
         if (hit && add_rw_edge(reader, txn->get_transaction_id())) {
             throw TransactionAbortException(txn->get_transaction_id(), AbortReason::DEADLOCK_PREVENTION);
         }
+        ++it;
     }
 }
 
@@ -576,12 +613,20 @@ void TransactionManager::cleanup_abort(Transaction *txn) {
     }
     std::lock_guard<std::mutex> lock(mvcc_latch_);
     txn_id_t txn_id = txn->get_transaction_id();
-    for (auto &entry : versions_) {
-        for (auto &version : entry.second) {
-            if (version.txn_id == txn_id) {
-                version.aborted = true;
+    auto written_it = txn_version_keys_.find(txn_id);
+    if (written_it != txn_version_keys_.end()) {
+        for (const auto &key : written_it->second) {
+            auto version_it = versions_.find(key);
+            if (version_it == versions_.end()) {
+                continue;
+            }
+            for (auto &version : version_it->second) {
+                if (version.txn_id == txn_id) {
+                    version.aborted = true;
+                }
             }
         }
+        txn_version_keys_.erase(written_it);
     }
     ser_states_.erase(txn_id);
     rw_edges_.erase(txn_id);

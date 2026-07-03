@@ -194,6 +194,9 @@ private:
     Version *visible_version(const std::string &tab_name, const Rid &rid, Transaction *txn);
     bool version_visible(const Version &version, Transaction *txn) const;
     bool record_matches(const std::string &tab_name, const std::vector<Condition> &conds, const RmRecord &record);
+    std::vector<std::string> build_conflict_keys(const std::string &tab_name, const RmRecord &record) const;
+    void remember_version_write(txn_id_t txn_id, const std::string &version_key, const std::string &tab_name,
+                                const RmRecord &record);
     bool add_rw_edge(txn_id_t reader, txn_id_t writer);
     bool creates_rw_cycle(txn_id_t from, txn_id_t to);
     bool txn_relevant_for_ser(txn_id_t txn_id, Transaction *current);
@@ -208,6 +211,8 @@ private:
     std::mutex mvcc_latch_;
     std::mutex write_latch_;
     std::unordered_map<std::string, std::vector<Version>> versions_;
+    std::unordered_map<txn_id_t, std::vector<std::string>> txn_version_keys_;
+    std::unordered_map<std::string, std::vector<std::string>> conflict_key_versions_;
     std::unordered_map<txn_id_t, TxnSerState> ser_states_;
     std::unordered_map<txn_id_t, std::unordered_set<txn_id_t>> rw_edges_;
 

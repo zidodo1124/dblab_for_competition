@@ -520,166 +520,77 @@ int join_condition_count_between(const std::vector<Condition> &join_conds,
     return count;
 }
 
-size_t estimate_join_rows(size_t left_rows, size_t right_rows, int connecting_conds) {
-    if (left_rows == 0 || right_rows == 0) {
-        return 0;
-    }
-    if (connecting_conds <= 0) {
-        return left_rows * right_rows;
-    }
-    size_t rows = std::min(left_rows, right_rows);
-    for (int i = 1; i < connecting_conds; ++i) {
-        rows = std::max<size_t>(1, rows / 2);
-    }
-    return rows;
-}
-
-struct JoinOrderCost {
-    size_t cost = 0;
-    size_t final_rows = 0;
-    int cross_joins = 0;
-};
-
-JoinOrderCost estimate_order_cost(const std::vector<std::string> &order,
-                                  const std::vector<Condition> &join_conds,
-                                  const std::map<std::string, size_t> &local_rows,
-                                  const std::map<std::string, int> &page_counts) {
-    JoinOrderCost result;
-    std::set<std::string> joined{order.front()};
-    size_t current_rows = local_rows.at(order.front());
-    result.cost = current_rows * static_cast<size_t>(page_counts.at(order.front()));
-
-    for (size_t i = 1; i < order.size(); ++i) {
-        const auto &table = order[i];
-        int connecting_conds = join_condition_count_between(join_conds, joined, table);
-        if (connecting_conds == 0) {
-            ++result.cross_joins;
-        }
-        size_t right_rows = local_rows.at(table);
-        result.cost += std::max<size_t>(1, current_rows) * right_rows *
-                       static_cast<size_t>(page_counts.at(table));
-        current_rows = estimate_join_rows(current_rows, right_rows, connecting_conds);
-        result.cost += current_rows;
-        joined.insert(table);
-    }
-
-    result.final_rows = current_rows;
-    return result;
-}
-
-std::unique_ptr<AbstractExecutor> make_explain_cost_executor(std::shared_ptr<Plan> plan,
-                                                             SmManager *sm_manager,
-                                                             Context *context) {
-    if (auto x = std::dynamic_pointer_cast<ProjectionPlan>(plan)) {
-        return std::make_unique<ProjectionExecutor>(
-            make_explain_cost_executor(x->subplan_, sm_manager, context), x->sel_cols_,
-            x->display_all_, x->tab_display_names_);
-    }
-    if (auto x = std::dynamic_pointer_cast<FilterPlan>(plan)) {
-        return std::make_unique<FilterExecutor>(
-            make_explain_cost_executor(x->subplan_, sm_manager, context), x->conds_, x->tab_display_names_);
-    }
-    if (auto x = std::dynamic_pointer_cast<ScanPlan>(plan)) {
-        return std::make_unique<SeqScanExecutor>(
-            sm_manager, x->tab_name_, x->conds_, context, false, x->logical_tab_name_, x->table_output_name_);
-    }
-    if (auto x = std::dynamic_pointer_cast<JoinPlan>(plan)) {
-        return std::make_unique<NestedLoopJoinExecutor>(
-            make_explain_cost_executor(x->left_, sm_manager, context),
-            make_explain_cost_executor(x->right_, sm_manager, context),
-            x->conds_, x->tab_display_names_);
-    }
-    return nullptr;
-}
-
-size_t sum_explain_rows(const std::string &explain) {
-    size_t sum = 0;
-    size_t pos = 0;
-    const std::string marker = "rows=";
-    while ((pos = explain.find(marker, pos)) != std::string::npos) {
-        pos += marker.size();
-        size_t end = pos;
-        while (end < explain.size() && explain[end] >= '0' && explain[end] <= '9') {
-            ++end;
-        }
-        if (end > pos) {
-            sum += static_cast<size_t>(std::stoull(explain.substr(pos, end - pos)));
-        }
-        pos = end;
-    }
-    return sum;
-}
-
-size_t actual_explain_cost(std::shared_ptr<Plan> plan, SmManager *sm_manager, Context *context) {
-    auto executor = make_explain_cost_executor(std::move(plan), sm_manager, context);
-    if (executor == nullptr) {
-        return static_cast<size_t>(-1);
-    }
-    for (executor->beginTuple(); !executor->is_end(); executor->nextTuple()) {
-        auto tuple = executor->Next();
-        (void)tuple;
-    }
-    return sum_explain_rows(executor->explain());
-}
-
 std::vector<std::string> choose_join_order_for_explain(
     const std::shared_ptr<Query> &query,
-    const std::map<std::string, std::vector<Condition>> &local_conds,
     const std::vector<Condition> &join_conds,
-    const std::map<std::string, std::shared_ptr<Plan>> &table_plans,
-    const std::vector<std::string> &join_cond_right_tables,
     SmManager *sm_manager,
     Context *context) {
-    if (query->tables.size() <= 2) {
+    if (query->tables.size() <= 1) {
         return query->tables;
     }
 
     std::map<std::string, int> original_pos;
-    std::map<std::string, size_t> local_rows;
+    std::map<std::string, size_t> base_rows;
     std::map<std::string, int> page_counts;
     for (size_t i = 0; i < query->tables.size(); ++i) {
         const auto &table = query->tables[i];
         original_pos[table] = static_cast<int>(i);
-        auto cond_it = local_conds.find(table);
-        const auto &conds = cond_it == local_conds.end() ? std::vector<Condition>() : cond_it->second;
         std::string real_table = query->table_real_names.count(table) ? query->table_real_names.at(table) : table;
-        local_rows[table] = estimate_local_rows(sm_manager, real_table, table, conds, context);
+        base_rows[table] = estimate_local_rows(sm_manager, real_table, table, std::vector<Condition>(), context);
         page_counts[table] = table_page_count(sm_manager, real_table);
     }
 
-    std::vector<std::string> perm = query->tables;
-    std::sort(perm.begin(), perm.end(), [&](const std::string &lhs, const std::string &rhs) {
-        return original_pos[lhs] < original_pos[rhs];
-    });
-    std::vector<std::string> best_order = perm;
-    JoinOrderCost best_cost = estimate_order_cost(best_order, join_conds, local_rows, page_counts);
-    size_t best_actual_cost = actual_explain_cost(
-        build_join_plan_for_order(best_order, table_plans, join_conds, query->tab_display_names,
-                                  join_cond_right_tables, true),
-        sm_manager, context);
-
-    std::sort(perm.begin(), perm.end());
-    do {
-        JoinOrderCost curr_cost = estimate_order_cost(perm, join_conds, local_rows, page_counts);
-        size_t curr_actual_cost = actual_explain_cost(
-            build_join_plan_for_order(perm, table_plans, join_conds, query->tab_display_names,
-                                      join_cond_right_tables, true),
-            sm_manager, context);
-        bool better = curr_cost.cross_joins < best_cost.cross_joins ||
-                      (curr_cost.cross_joins == best_cost.cross_joins && curr_actual_cost < best_actual_cost) ||
-                      (curr_cost.cross_joins == best_cost.cross_joins && curr_actual_cost == best_actual_cost &&
-                       curr_cost.cost < best_cost.cost) ||
-                      (curr_cost.cross_joins == best_cost.cross_joins && curr_actual_cost == best_actual_cost &&
-                       curr_cost.cost == best_cost.cost &&
-                       curr_cost.final_rows < best_cost.final_rows);
-        if (better) {
-            best_cost = curr_cost;
-            best_actual_cost = curr_actual_cost;
-            best_order = perm;
+    std::set<std::string> remaining(query->tables.begin(), query->tables.end());
+    std::vector<std::string> order;
+    auto choose_smaller_base = [&](const std::string &lhs, const std::string &rhs) {
+        if (base_rows[lhs] != base_rows[rhs]) {
+            return base_rows[lhs] < base_rows[rhs];
         }
-    } while (std::next_permutation(perm.begin(), perm.end()));
+        if (page_counts[lhs] != page_counts[rhs]) {
+            return page_counts[lhs] < page_counts[rhs];
+        }
+        return original_pos[lhs] < original_pos[rhs];
+    };
 
-    return best_order;
+    auto first = std::min_element(remaining.begin(), remaining.end(), choose_smaller_base);
+    order.push_back(*first);
+    remaining.erase(first);
+
+    std::set<std::string> joined{order.front()};
+    while (!remaining.empty()) {
+        bool has_connected = false;
+        for (const auto &table : remaining) {
+            if (join_condition_count_between(join_conds, joined, table) > 0) {
+                has_connected = true;
+                break;
+            }
+        }
+
+        auto next = std::min_element(remaining.begin(), remaining.end(), [&](const std::string &lhs,
+                                                                             const std::string &rhs) {
+            int lhs_join_count = join_condition_count_between(join_conds, joined, lhs);
+            int rhs_join_count = join_condition_count_between(join_conds, joined, rhs);
+            if (has_connected && (lhs_join_count > 0) != (rhs_join_count > 0)) {
+                return lhs_join_count > 0;
+            }
+            if (base_rows[lhs] != base_rows[rhs]) {
+                return base_rows[lhs] < base_rows[rhs];
+            }
+            if (lhs_join_count != rhs_join_count) {
+                return lhs_join_count > rhs_join_count;
+            }
+            if (page_counts[lhs] != page_counts[rhs]) {
+                return page_counts[lhs] < page_counts[rhs];
+            }
+            return original_pos[lhs] < original_pos[rhs];
+        });
+
+        order.push_back(*next);
+        joined.insert(*next);
+        remaining.erase(next);
+    }
+
+    return order;
 }
 
 std::shared_ptr<Plan> build_join_plan_for_order(
@@ -814,8 +725,7 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
     }
 
     std::vector<std::string> join_order =
-        choose_join_order_for_explain(query, local_conds, join_conds, table_plans, join_cond_right_tables,
-                                      sm_manager_, context);
+        choose_join_order_for_explain(query, join_conds, sm_manager_, context);
     std::shared_ptr<Plan> root = build_join_plan_for_order(
         join_order, table_plans, join_conds, query->tab_display_names, join_cond_right_tables, true);
     if (!post_join_conds.empty()) {

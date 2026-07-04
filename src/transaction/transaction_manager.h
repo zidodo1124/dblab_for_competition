@@ -72,6 +72,7 @@ public:
     void set_concurrency_mode(ConcurrencyMode concurrency_mode) { concurrency_mode_ = concurrency_mode; }
 
     LockManager* get_lock_manager() { return lock_manager_; }
+    std::vector<txn_id_t> snapshot_active_txn_ids();
 
     void append_insert_version(const std::string &tab_name, const Rid &rid, const RmRecord &record, Transaction *txn);
     void append_update_version(const std::string &tab_name, const Rid &rid, const RmRecord &old_record,

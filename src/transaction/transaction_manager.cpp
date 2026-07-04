@@ -68,6 +68,21 @@ Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manage
     return txn;
 }
 
+std::vector<txn_id_t> TransactionManager::snapshot_active_txn_ids() {
+    std::vector<txn_id_t> active_txn_ids;
+    std::unique_lock<std::mutex> lock(latch_);
+    active_txn_ids.reserve(TransactionManager::txn_map.size());
+    for (const auto &entry : TransactionManager::txn_map) {
+        Transaction *txn = entry.second;
+        if (txn != nullptr && txn->get_state() != TransactionState::COMMITTED &&
+            txn->get_state() != TransactionState::ABORTED && txn->get_write_set() != nullptr &&
+            !txn->get_write_set()->empty()) {
+            active_txn_ids.push_back(entry.first);
+        }
+    }
+    return active_txn_ids;
+}
+
 /**
  * @description: 事务的提交方法
  * @param {Transaction*} txn 需要提交的事务

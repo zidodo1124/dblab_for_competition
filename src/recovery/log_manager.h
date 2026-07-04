@@ -384,7 +384,8 @@ public:
     lsn_t add_log_to_buffer(LogRecord* log_record);
     void flush_log_to_disk();
     lsn_t add_log_record(LogRecord* log_record, Transaction* txn = nullptr);
-    void create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_manager);
+    void create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_manager,
+                                  std::vector<txn_id_t> active_txn_ids = {});
 
     LogBuffer* get_log_buffer() { return &log_buffer_; }
 

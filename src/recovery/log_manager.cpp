@@ -14,7 +14,6 @@ See the Mulan PSL v2 for more details. */
 #include "system/sm_manager.h"
 #include "storage/buffer_pool_manager.h"
 #include "transaction/transaction.h"
-#include "transaction/transaction_manager.h"
 
 void LogManager::ensure_lsn_initialized_unlocked() {
     if (next_lsn_ == INVALID_LSN) {
@@ -76,18 +75,11 @@ lsn_t LogManager::add_log_record(LogRecord* log_record, Transaction* txn) {
     return log_record->lsn_;
 }
 
-void LogManager::create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_manager) {
+void LogManager::create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_manager,
+                                          std::vector<txn_id_t> active_txn_ids) {
     flush_log_to_disk();
     int checkpoint_offset = disk_manager_->get_file_size(LOG_FILE_NAME);
-    std::vector<txn_id_t> active_txn_ids;
-    active_txn_ids.reserve(TransactionManager::txn_map.size());
-    for (const auto &entry : TransactionManager::txn_map) {
-        Transaction *txn = entry.second;
-        if (txn != nullptr && txn->get_state() != TransactionState::COMMITTED &&
-            txn->get_state() != TransactionState::ABORTED) {
-            active_txn_ids.push_back(entry.first);
-        }
-    }
+    int restart_offset = active_txn_ids.empty() ? checkpoint_offset : 0;
     CheckpointLogRecord checkpoint(std::move(active_txn_ids));
     add_log_record(&checkpoint);
     flush_log_to_disk();
@@ -100,6 +92,6 @@ void LogManager::create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_
         bpm->flush_all_pages(entry.second->get_fd());
     }
     std::ofstream restart("restart.ckpt", std::ios::trunc);
-    restart << checkpoint_offset;
+    restart << restart_offset;
     restart.flush();
 }

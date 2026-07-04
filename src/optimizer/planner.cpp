@@ -456,19 +456,6 @@ TabCol resolve_query_col(const TabCol &target, const std::vector<std::string> &t
     return resolved;
 }
 
-bool keeps_all_table_cols(const std::vector<TabCol> &cols, const TabMeta &tab,
-                          const std::string &logical_tab_name) {
-    if (cols.size() != tab.cols.size()) {
-        return false;
-    }
-    for (const auto &col : tab.cols) {
-        if (!has_col(cols, {.tab_name = logical_tab_name, .col_name = col.name})) {
-            return false;
-        }
-    }
-    return true;
-}
-
 std::vector<TabCol> aggregate_output_cols(const std::vector<SelectItem> &select_items,
                                           const std::map<std::string, std::string> &display_names) {
     std::vector<TabCol> cols;
@@ -489,38 +476,118 @@ bool is_subset(const std::set<std::string> &small, const std::set<std::string> &
     return true;
 }
 
-bool connects_joined_tables(const Condition &cond, const std::set<std::string> &joined,
-                            const std::string &candidate) {
-    auto tabs = condition_tables(cond);
-    return tabs.find(candidate) != tabs.end() &&
-           std::any_of(tabs.begin(), tabs.end(), [&](const std::string &tab) {
-               return joined.find(tab) != joined.end();
-           });
+std::shared_ptr<Plan> build_join_plan_for_order(
+    const std::vector<std::string> &join_order, const std::map<std::string, std::shared_ptr<Plan>> &table_plans,
+    const std::vector<Condition> &join_conds, const std::map<std::string, std::string> &display_names,
+    const std::vector<std::string> &join_cond_right_tables, bool append_unused_conds);
+
+int table_page_count(SmManager *sm_manager, const std::string &real_table) {
+    auto it = sm_manager->fhs_.find(real_table);
+    if (it == sm_manager->fhs_.end()) {
+        return 1;
+    }
+    return std::max(1, it->second->get_file_hdr().num_pages);
 }
 
-std::vector<std::string> choose_connected_join_order(const std::vector<std::string> &tables,
-                                                     const std::vector<Condition> &join_conds) {
-    if (tables.size() <= 2 || join_conds.empty()) {
-        return tables;
+size_t estimate_local_rows(SmManager *sm_manager, const std::string &real_table,
+                           const std::string &logical_table,
+                           const std::vector<Condition> &conds,
+                           Context *context) {
+    SeqScanExecutor scan(sm_manager, real_table, conds, context, true, logical_table, real_table);
+    size_t rows = 0;
+    for (scan.beginTuple(); !scan.is_end(); scan.nextTuple()) {
+        ++rows;
     }
+    return rows;
+}
 
-    std::vector<std::string> order{tables.front()};
-    std::vector<std::string> remaining(tables.begin() + 1, tables.end());
-    std::set<std::string> joined{tables.front()};
-
-    while (!remaining.empty()) {
-        auto selected = remaining.begin();
-        for (auto it = remaining.begin(); it != remaining.end(); ++it) {
-            if (std::any_of(join_conds.begin(), join_conds.end(), [&](const Condition &cond) {
-                    return connects_joined_tables(cond, joined, *it);
-                })) {
-                selected = it;
+int join_condition_count_between(const std::vector<Condition> &join_conds,
+                                 const std::set<std::string> &joined,
+                                 const std::string &table) {
+    int count = 0;
+    for (const auto &cond : join_conds) {
+        auto tabs = condition_tables(cond);
+        if (tabs.find(table) == tabs.end()) {
+            continue;
+        }
+        for (const auto &joined_table : joined) {
+            if (tabs.find(joined_table) != tabs.end()) {
+                ++count;
                 break;
             }
         }
-        joined.insert(*selected);
-        order.push_back(*selected);
-        remaining.erase(selected);
+    }
+    return count;
+}
+
+std::vector<std::string> choose_join_order_for_explain(
+    const std::shared_ptr<Query> &query,
+    const std::vector<Condition> &join_conds,
+    SmManager *sm_manager,
+    Context *context) {
+    if (query->tables.size() <= 1) {
+        return query->tables;
+    }
+
+    std::map<std::string, int> original_pos;
+    std::map<std::string, size_t> base_rows;
+    std::map<std::string, int> page_counts;
+    for (size_t i = 0; i < query->tables.size(); ++i) {
+        const auto &table = query->tables[i];
+        original_pos[table] = static_cast<int>(i);
+        std::string real_table = query->table_real_names.count(table) ? query->table_real_names.at(table) : table;
+        base_rows[table] = estimate_local_rows(sm_manager, real_table, table, std::vector<Condition>(), context);
+        page_counts[table] = table_page_count(sm_manager, real_table);
+    }
+
+    std::set<std::string> remaining(query->tables.begin(), query->tables.end());
+    std::vector<std::string> order;
+    auto choose_smaller_base = [&](const std::string &lhs, const std::string &rhs) {
+        if (base_rows[lhs] != base_rows[rhs]) {
+            return base_rows[lhs] < base_rows[rhs];
+        }
+        if (page_counts[lhs] != page_counts[rhs]) {
+            return page_counts[lhs] < page_counts[rhs];
+        }
+        return original_pos[lhs] < original_pos[rhs];
+    };
+
+    auto first = std::min_element(remaining.begin(), remaining.end(), choose_smaller_base);
+    order.push_back(*first);
+    remaining.erase(first);
+
+    std::set<std::string> joined{order.front()};
+    while (!remaining.empty()) {
+        bool has_connected = false;
+        for (const auto &table : remaining) {
+            if (join_condition_count_between(join_conds, joined, table) > 0) {
+                has_connected = true;
+                break;
+            }
+        }
+
+        auto next = std::min_element(remaining.begin(), remaining.end(), [&](const std::string &lhs,
+                                                                             const std::string &rhs) {
+            int lhs_join_count = join_condition_count_between(join_conds, joined, lhs);
+            int rhs_join_count = join_condition_count_between(join_conds, joined, rhs);
+            if (has_connected && (lhs_join_count > 0) != (rhs_join_count > 0)) {
+                return lhs_join_count > 0;
+            }
+            if (base_rows[lhs] != base_rows[rhs]) {
+                return base_rows[lhs] < base_rows[rhs];
+            }
+            if (lhs_join_count != rhs_join_count) {
+                return lhs_join_count > rhs_join_count;
+            }
+            if (page_counts[lhs] != page_counts[rhs]) {
+                return page_counts[lhs] < page_counts[rhs];
+            }
+            return original_pos[lhs] < original_pos[rhs];
+        });
+
+        order.push_back(*next);
+        joined.insert(*next);
+        remaining.erase(next);
     }
 
     return order;
@@ -579,20 +646,23 @@ std::shared_ptr<Plan> build_join_plan_for_order(
 std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Query> query, Context *context) {
     std::map<std::string, std::vector<Condition>> local_conds;
     std::vector<Condition> join_conds;
+    std::vector<Condition> post_join_conds;
     std::vector<std::string> join_cond_right_tables;
-    size_t on_cond_idx = 0;
     for (size_t cond_idx = 0; cond_idx < query->conds.size(); ++cond_idx) {
         const auto &cond = query->conds[cond_idx];
         std::string join_owner_table;
-        if (on_cond_idx < query->join_cond_right_tables.size()) {
-            join_owner_table = query->join_cond_right_tables[on_cond_idx++];
+        bool is_on_cond = cond_idx < query->join_cond_right_tables.size();
+        if (is_on_cond) {
+            join_owner_table = query->join_cond_right_tables[cond_idx];
         }
         auto tables = condition_tables(cond);
         if (tables.size() == 1) {
             local_conds[*tables.begin()].push_back(cond);
-        } else {
+        } else if (is_on_cond || !query->has_explicit_join) {
             join_conds.push_back(cond);
             join_cond_right_tables.push_back(join_owner_table);
+        } else {
+            post_join_conds.push_back(cond);
         }
     }
 
@@ -603,6 +673,10 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
             add_col(pushed_cols[col.tab_name], col);
         }
         for (const auto &cond : join_conds) {
+            add_col(pushed_cols[cond.lhs_col.tab_name], cond.lhs_col);
+            add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
+        }
+        for (const auto &cond : post_join_conds) {
             add_col(pushed_cols[cond.lhs_col.tab_name], cond.lhs_col);
             add_col(pushed_cols[cond.rhs_col.tab_name], cond.rhs_col);
         }
@@ -644,19 +718,20 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
                                                 query->tab_display_names);
         }
         if (push_project && !pushed_cols[tab_name].empty()) {
-            bool display_all = keeps_all_table_cols(pushed_cols[tab_name], sm_manager_->db_.get_table(real_table),
-                                                    tab_name);
             plan = std::make_shared<ProjectionPlan>(T_Projection, std::move(plan), pushed_cols[tab_name],
-                                                    display_all, query->tab_display_names);
+                                                    false, query->tab_display_names);
         }
         table_plans[tab_name] = std::move(plan);
     }
 
-    std::vector<std::string> join_order = query->has_explicit_join
-                                              ? query->tables
-                                              : choose_connected_join_order(query->tables, join_conds);
+    std::vector<std::string> join_order =
+        choose_join_order_for_explain(query, join_conds, sm_manager_, context);
     std::shared_ptr<Plan> root = build_join_plan_for_order(
         join_order, table_plans, join_conds, query->tab_display_names, join_cond_right_tables, true);
+    if (!post_join_conds.empty()) {
+        root = std::make_shared<FilterPlan>(T_Filter, std::move(root), post_join_conds,
+                                            query->tab_display_names);
+    }
     if (query->has_aggregation) {
         root = std::make_shared<AggregatePlan>(T_Aggregate, std::move(root), query->select_items, query->group_cols,
                                                query->having_conds, query->order_bys, query->has_limit,

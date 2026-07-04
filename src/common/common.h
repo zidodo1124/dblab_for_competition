@@ -12,6 +12,7 @@ See the Mulan PSL v2 for more details. */
 
 #include <cassert>
 #include <cstring>
+#include <iomanip>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -51,13 +52,8 @@ struct Value {
         float_val = float_val_;
         if (display_val.empty()) {
             std::ostringstream os;
-            os << float_val_;
+            os << std::fixed << std::setprecision(6) << float_val_;
             display_val = os.str();
-            if (display_val.find('.') == std::string::npos &&
-                display_val.find('e') == std::string::npos &&
-                display_val.find('E') == std::string::npos) {
-                display_val += ".0";
-            }
         }
     }
 

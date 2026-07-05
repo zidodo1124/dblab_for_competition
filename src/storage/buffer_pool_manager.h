@@ -80,11 +80,13 @@ class BufferPoolManager {
 
     void flush_all_pages(int fd);
     void flush_dirty_pages(int fd);
+    void flush_dirty_pages(const std::vector<int> &fds);
+    void flush_dirty_pages();
 
    private:
     bool find_victim_page(frame_id_t* frame_id);
 
-    void write_page_to_disk(Page *page, PageId page_id);
+    void write_page_to_disk(Page *page, PageId page_id, bool ensure_wal = true);
 
     void update_page(Page* page, PageId new_page_id, frame_id_t new_frame_id);
 };

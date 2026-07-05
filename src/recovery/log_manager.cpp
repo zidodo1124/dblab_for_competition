@@ -120,13 +120,17 @@ void LogManager::create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_
     add_log_record(&checkpoint);
     flush_log_to_disk();
     sm_manager->flush_meta();
+    std::vector<int> checkpoint_fds;
+    checkpoint_fds.reserve(sm_manager->fhs_.size() + sm_manager->ihs_.size());
     for (auto &entry : sm_manager->fhs_) {
         entry.second->flush_file_hdr();
-        bpm->flush_dirty_pages(entry.second->GetFd());
+        checkpoint_fds.push_back(entry.second->GetFd());
     }
     for (auto &entry : sm_manager->ihs_) {
-        bpm->flush_dirty_pages(entry.second->get_fd());
+        entry.second->flush_file_hdr();
+        checkpoint_fds.push_back(entry.second->get_fd());
     }
+    bpm->flush_dirty_pages(checkpoint_fds);
     std::ofstream restart("restart.ckpt", std::ios::trunc);
     restart << restart_offset;
     restart.flush();

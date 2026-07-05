@@ -12,6 +12,7 @@ See the Mulan PSL v2 for more details. */
 
 #include <algorithm>
 #include <cstring>
+#include <vector>
 
 #include "ix_scan.h"
 
@@ -174,6 +175,12 @@ IxIndexHandle::IxIndexHandle(DiskManager *disk_manager, BufferPoolManager *buffe
     
     // disk_manager管理的fd对应的文件中，设置从file_hdr_->num_pages开始分配page_no
     disk_manager_->set_fd2pageno(fd, file_hdr_->num_pages_);
+}
+
+void IxIndexHandle::flush_file_hdr() const {
+    std::vector<char> data(file_hdr_->tot_len_);
+    file_hdr_->serialize(data.data());
+    disk_manager_->write_page(fd_, IX_FILE_HDR_PAGE, data.data(), file_hdr_->tot_len_);
 }
 
 /**

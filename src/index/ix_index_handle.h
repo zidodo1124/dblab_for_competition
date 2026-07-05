@@ -175,6 +175,7 @@ class IxIndexHandle {
 
     // for search
     bool get_value(const char *key, std::vector<Rid> *result, Transaction *transaction);
+    void flush_file_hdr() const;
 
     std::pair<IxNodeHandle *, bool> find_leaf_page(const char *key, Operation operation, Transaction *transaction,
                                                  bool find_first = false);

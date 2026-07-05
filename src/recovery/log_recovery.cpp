@@ -282,6 +282,7 @@ void RecoveryManager::undo() {
         buffer_pool_manager_->flush_all_pages(entry.second->GetFd());
     }
     for (auto &entry : sm_manager_->ihs_) {
+        entry.second->flush_file_hdr();
         buffer_pool_manager_->flush_all_pages(entry.second->get_fd());
     }
 }

@@ -111,7 +111,7 @@ void LogManager::create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_
     flush_log_to_disk();
     CheckpointLogRecord checkpoint(std::move(active_txns));
     lsn_t checkpoint_lsn = add_log_record(&checkpoint);
-    int restart_offset = static_cast<int>(checkpoint_lsn + checkpoint.log_tot_len_);
+    int restart_offset = static_cast<int>(checkpoint_lsn);
     for (const auto &active_txn : checkpoint.active_txns_) {
         if (active_txn.first_lsn != INVALID_LSN) {
             restart_offset = std::min(restart_offset, static_cast<int>(active_txn.first_lsn));

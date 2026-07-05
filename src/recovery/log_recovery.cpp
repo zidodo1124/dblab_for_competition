@@ -182,6 +182,7 @@ void RecoveryManager::analyze() {
         } else if (type == LogType::ABORT) {
             undo_txns_.erase(tid);
         } else if (type == LogType::INSERT || type == LogType::DELETE || type == LogType::UPDATE) {
+            undo_txns_.insert(tid);
             data_logs_.push_back({log_offset, len, type, tid, lsn});
         }
         log_offset += static_cast<int>(len);

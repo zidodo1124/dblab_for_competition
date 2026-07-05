@@ -196,3 +196,15 @@ void BufferPoolManager::flush_all_pages(int fd) {
         }
     }
 }
+
+void BufferPoolManager::flush_dirty_pages(int fd) {
+    std::scoped_lock lock{latch_};
+    for (size_t frame_id = 0; frame_id < pool_size_; frame_id++) {
+        Page *page = &pages_[frame_id];
+        PageId page_id = page->get_page_id();
+        if (page_id.fd == fd && page_id.page_no != INVALID_PAGE_ID && page->is_dirty_) {
+            disk_manager_->write_page(fd, page_id.page_no, page->get_data(), PAGE_SIZE);
+            page->is_dirty_ = false;
+        }
+    }
+}

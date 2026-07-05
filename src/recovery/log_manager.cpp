@@ -86,10 +86,10 @@ void LogManager::create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_
     sm_manager->flush_meta();
     for (auto &entry : sm_manager->fhs_) {
         entry.second->flush_file_hdr();
-        bpm->flush_all_pages(entry.second->GetFd());
+        bpm->flush_dirty_pages(entry.second->GetFd());
     }
     for (auto &entry : sm_manager->ihs_) {
-        bpm->flush_all_pages(entry.second->get_fd());
+        bpm->flush_dirty_pages(entry.second->get_fd());
     }
     std::ofstream restart("restart.ckpt", std::ios::trunc);
     restart << restart_offset;

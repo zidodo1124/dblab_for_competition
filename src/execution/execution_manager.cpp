@@ -49,6 +49,8 @@ const char *help_info = "Supported SQL syntax:\n"
 // 主要负责执行DDL语句
 void QlManager::run_mutli_query(std::shared_ptr<Plan> plan, Context *context){
     if (auto x = std::dynamic_pointer_cast<DDLPlan>(plan)) {
+        auto write_guard = txn_mgr_ != nullptr ? txn_mgr_->acquire_write_latch()
+                                               : std::unique_lock<std::mutex>();
         switch(x->tag) {
             case T_CreateTable:
             {

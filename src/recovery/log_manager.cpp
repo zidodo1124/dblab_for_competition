@@ -109,15 +109,14 @@ lsn_t LogManager::add_log_record(LogRecord* log_record, Transaction* txn) {
 void LogManager::create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_manager,
                                           std::vector<CheckpointTxnInfo> active_txns) {
     flush_log_to_disk();
-    int checkpoint_offset = disk_manager_->get_file_size(LOG_FILE_NAME);
-    int restart_offset = checkpoint_offset;
-    for (const auto &active_txn : active_txns) {
+    CheckpointLogRecord checkpoint(std::move(active_txns));
+    lsn_t checkpoint_lsn = add_log_record(&checkpoint);
+    int restart_offset = static_cast<int>(checkpoint_lsn + checkpoint.log_tot_len_);
+    for (const auto &active_txn : checkpoint.active_txns_) {
         if (active_txn.first_lsn != INVALID_LSN) {
             restart_offset = std::min(restart_offset, static_cast<int>(active_txn.first_lsn));
         }
     }
-    CheckpointLogRecord checkpoint(std::move(active_txns));
-    add_log_record(&checkpoint);
     flush_log_to_disk();
     sm_manager->flush_meta();
     std::vector<int> checkpoint_fds;
@@ -130,7 +129,7 @@ void LogManager::create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_
         entry.second->flush_file_hdr();
         checkpoint_fds.push_back(entry.second->get_fd());
     }
-    bpm->flush_dirty_pages(checkpoint_fds);
+    bpm->flush_dirty_pages(checkpoint_fds, false);
     std::ofstream restart("restart.ckpt", std::ios::trunc);
     restart << restart_offset;
     restart.flush();

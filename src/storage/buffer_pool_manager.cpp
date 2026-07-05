@@ -215,7 +215,7 @@ void BufferPoolManager::flush_dirty_pages(int fd) {
     flush_dirty_pages(std::vector<int>{fd});
 }
 
-void BufferPoolManager::flush_dirty_pages(const std::vector<int> &fds) {
+void BufferPoolManager::flush_dirty_pages(const std::vector<int> &fds, bool ensure_wal) {
     if (fds.empty()) {
         return;
     }
@@ -230,8 +230,8 @@ void BufferPoolManager::flush_dirty_pages(const std::vector<int> &fds) {
         Page *page = &pages_[frame_id];
         PageId page_id = page->get_page_id();
         if (target_fds.count(page_id.fd) > 0 && page_id.page_no != INVALID_PAGE_ID && page->is_dirty_) {
-            bool ensure_wal = log_manager_ != nullptr && page->get_page_lsn() > persisted_lsn;
-            write_page_to_disk(page, page_id, ensure_wal);
+            bool check_page_lsn = ensure_wal && log_manager_ != nullptr && page->get_page_lsn() > persisted_lsn;
+            write_page_to_disk(page, page_id, check_page_lsn);
             page->is_dirty_ = false;
         }
     }
@@ -248,8 +248,8 @@ void BufferPoolManager::flush_dirty_pages() {
         Page *page = &pages_[frame_id];
         PageId page_id = page->get_page_id();
         if (page_id.page_no != INVALID_PAGE_ID && page->is_dirty_) {
-            bool ensure_wal = log_manager_ != nullptr && page->get_page_lsn() > persisted_lsn;
-            write_page_to_disk(page, page_id, ensure_wal);
+            bool check_page_lsn = log_manager_ != nullptr && page->get_page_lsn() > persisted_lsn;
+            write_page_to_disk(page, page_id, check_page_lsn);
             page->is_dirty_ = false;
         }
     }

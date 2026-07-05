@@ -50,6 +50,7 @@ void clear_write_set(Transaction *txn) {
  * @param {LogManager*} log_manager 日志管理器指针
  */
 Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manager) {
+    std::unique_lock<std::mutex> write_lock(write_latch_);
     if (txn == nullptr) {
         txn = new Transaction(next_txn_id_++);
     }
@@ -93,6 +94,7 @@ std::vector<CheckpointTxnInfo> TransactionManager::snapshot_active_txns(txn_id_t
  * @param {LogManager*} log_manager 日志管理器指针
  */
 void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
+    std::unique_lock<std::mutex> write_lock(write_latch_);
     if (txn == nullptr) {
         return;
     }
@@ -148,6 +150,7 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
  * @param {LogManager} *log_manager 日志管理器指针
  */
 void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
+    std::unique_lock<std::mutex> write_lock(write_latch_);
     if (txn == nullptr) {
         return;
     }

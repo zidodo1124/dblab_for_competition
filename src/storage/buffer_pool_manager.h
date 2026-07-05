@@ -80,7 +80,7 @@ class BufferPoolManager {
 
     void flush_all_pages(int fd);
     void flush_dirty_pages(int fd);
-    void flush_dirty_pages(const std::vector<int> &fds);
+    void flush_dirty_pages(const std::vector<int> &fds, bool ensure_wal = true);
     void flush_dirty_pages();
 
    private:

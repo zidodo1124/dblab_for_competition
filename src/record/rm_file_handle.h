@@ -79,13 +79,15 @@ class RmFileHandle {
 
     std::unique_ptr<RmRecord> get_record(const Rid &rid, Context *context) const;
 
+    Rid get_next_insert_rid();
+
     Rid insert_record(char *buf, Context *context);
 
-    void insert_record(const Rid &rid, char *buf);
+    void insert_record(const Rid &rid, char *buf, lsn_t page_lsn = INVALID_LSN);
 
-    void delete_record(const Rid &rid, Context *context);
+    void delete_record(const Rid &rid, Context *context, lsn_t page_lsn = INVALID_LSN);
 
-    void update_record(const Rid &rid, char *buf, Context *context);
+    void update_record(const Rid &rid, char *buf, Context *context, lsn_t page_lsn = INVALID_LSN);
 
     RmPageHandle create_new_page_handle();
 

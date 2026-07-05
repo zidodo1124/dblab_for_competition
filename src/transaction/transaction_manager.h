@@ -72,7 +72,7 @@ public:
     void set_concurrency_mode(ConcurrencyMode concurrency_mode) { concurrency_mode_ = concurrency_mode; }
 
     LockManager* get_lock_manager() { return lock_manager_; }
-    std::vector<txn_id_t> snapshot_active_txn_ids(txn_id_t exclude_txn_id = INVALID_TXN_ID);
+    std::vector<CheckpointTxnInfo> snapshot_active_txns(txn_id_t exclude_txn_id = INVALID_TXN_ID);
 
     void append_insert_version(const std::string &tab_name, const Rid &rid, const RmRecord &record, Transaction *txn);
     void append_update_version(const std::string &tab_name, const Rid &rid, const RmRecord &old_record,
@@ -199,6 +199,11 @@ private:
     std::vector<std::string> build_conflict_keys(const std::string &tab_name, const RmRecord &record) const;
     void remember_version_write(txn_id_t txn_id, const std::string &version_key, const std::string &tab_name,
                                 const RmRecord &record);
+    timestamp_t oldest_active_start_ts(txn_id_t exclude_txn_id = INVALID_TXN_ID);
+    bool conflict_entry_relevant(const std::string &conflict_key, const std::string &version_key,
+                                 timestamp_t oldest_start_ts);
+    void prune_conflict_indexes(timestamp_t oldest_start_ts);
+    void remove_table_conflict_indexes(const std::string &tab_name);
     bool add_rw_edge(txn_id_t reader, txn_id_t writer);
     bool creates_rw_cycle(txn_id_t from, txn_id_t to);
     bool txn_relevant_for_ser(txn_id_t txn_id, Transaction *current);

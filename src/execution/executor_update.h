@@ -149,12 +149,13 @@ class UpdateExecutor : public AbstractExecutor {
         }
 
         for (size_t i = 0; i < target_rids.size(); ++i) {
+            lsn_t lsn = INVALID_LSN;
             if (context_->log_mgr_ != nullptr && context_->txn_ != nullptr) {
                 UpdateLogRecord log_record(context_->txn_->get_transaction_id(), old_recs[i], new_recs[i],
                                            target_rids[i], tab_name_);
-                context_->log_mgr_->add_log_record(&log_record, context_->txn_);
+                lsn = context_->log_mgr_->add_log_record(&log_record, context_->txn_);
             }
-            fh_->update_record(target_rids[i], new_recs[i].data, context_);
+            fh_->update_record(target_rids[i], new_recs[i].data, context_, lsn);
             if (context_->txn_ != nullptr) {
                 if (context_->txn_mgr_ != nullptr) {
                     context_->txn_mgr_->append_update_version(tab_name_, target_rids[i], old_recs[i], new_recs[i], context_->txn_);

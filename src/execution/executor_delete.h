@@ -52,9 +52,10 @@ class DeleteExecutor : public AbstractExecutor {
             if (context_->txn_mgr_ != nullptr) {
                 context_->txn_mgr_->check_ser_write(tab_name_, rid, rec.get(), nullptr, context_->txn_);
             }
+            lsn_t lsn = INVALID_LSN;
             if (context_->log_mgr_ != nullptr && context_->txn_ != nullptr) {
                 DeleteLogRecord log_record(context_->txn_->get_transaction_id(), *rec, rid, tab_name_);
-                context_->log_mgr_->add_log_record(&log_record, context_->txn_);
+                lsn = context_->log_mgr_->add_log_record(&log_record, context_->txn_);
             }
             for (auto &index : tab_.indexes) {
                 auto ih = sm_manager_->ihs_.at(sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols)).get();
@@ -66,7 +67,7 @@ class DeleteExecutor : public AbstractExecutor {
                 }
                 ih->delete_entry(key.data(), context_->txn_);
             }
-            fh_->delete_record(rid, context_);
+            fh_->delete_record(rid, context_, lsn);
             if (context_->txn_ != nullptr) {
                 if (context_->txn_mgr_ != nullptr) {
                     context_->txn_mgr_->append_delete_version(tab_name_, rid, *rec, context_->txn_);

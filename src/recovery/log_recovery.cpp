@@ -70,7 +70,7 @@ bool page_lsn_covers(RmFileHandle *fh, const Rid &rid, lsn_t lsn) {
     }
 }
 
-std::vector<txn_id_t> checkpoint_active_txns(const char *data) {
+std::vector<CheckpointTxnInfo> checkpoint_active_txns(const char *data) {
     auto len = *reinterpret_cast<const uint32_t *>(data + OFFSET_LOG_TOT_LEN);
     if (len <= LOG_HEADER_SIZE) {
         return {};
@@ -78,12 +78,31 @@ std::vector<txn_id_t> checkpoint_active_txns(const char *data) {
     int offset = OFFSET_LOG_DATA;
     auto active_count = *reinterpret_cast<const uint32_t *>(data + offset);
     offset += sizeof(uint32_t);
-    if (offset + static_cast<int>(active_count * sizeof(txn_id_t)) > static_cast<int>(len)) {
+    int remaining = static_cast<int>(len) - offset;
+    int new_payload_size = static_cast<int>(active_count * (sizeof(txn_id_t) + sizeof(lsn_t)));
+    int old_payload_size = static_cast<int>(active_count * sizeof(txn_id_t));
+    if (remaining < old_payload_size) {
         return {};
     }
-    std::vector<txn_id_t> active_txns(active_count);
-    if (active_count > 0) {
-        memcpy(active_txns.data(), data + offset, active_count * sizeof(txn_id_t));
+    std::vector<CheckpointTxnInfo> active_txns;
+    active_txns.reserve(active_count);
+    if (remaining >= new_payload_size) {
+        for (uint32_t i = 0; i < active_count; ++i) {
+            CheckpointTxnInfo active_txn;
+            active_txn.txn_id = *reinterpret_cast<const txn_id_t *>(data + offset);
+            offset += sizeof(txn_id_t);
+            active_txn.first_lsn = *reinterpret_cast<const lsn_t *>(data + offset);
+            offset += sizeof(lsn_t);
+            active_txns.push_back(active_txn);
+        }
+    } else {
+        for (uint32_t i = 0; i < active_count; ++i) {
+            CheckpointTxnInfo active_txn;
+            active_txn.txn_id = *reinterpret_cast<const txn_id_t *>(data + offset);
+            offset += sizeof(txn_id_t);
+            active_txn.first_lsn = INVALID_LSN;
+            active_txns.push_back(active_txn);
+        }
     }
     return active_txns;
 }
@@ -150,7 +169,11 @@ void RecoveryManager::analyze() {
         if (type == LogType::CHECKPOINT) {
             undo_txns_.clear();
             auto active_txns = checkpoint_active_txns(log_data_.data() + log_offset);
-            undo_txns_.insert(active_txns.begin(), active_txns.end());
+            for (const auto &active_txn : active_txns) {
+                if (active_txn.txn_id != INVALID_TXN_ID) {
+                    undo_txns_.insert(active_txn.txn_id);
+                }
+            }
         } else if (type == LogType::begin) {
             undo_txns_.insert(tid);
         } else if (type == LogType::commit) {
@@ -180,8 +203,7 @@ void RecoveryManager::redo() {
                     continue;
                 }
                 if (!record_exists(fh, insert_log->rid_)) {
-                    fh->insert_record(insert_log->rid_, insert_log->insert_value_.data);
-                    fh->set_page_lsn(insert_log->rid_.page_no, record->lsn_);
+                    fh->insert_record(insert_log->rid_, insert_log->insert_value_.data, record->lsn_);
                 }
                 if (has_indexes) {
                     insert_index_entries(sm_manager_, tab_name, insert_log->insert_value_, insert_log->rid_);
@@ -197,8 +219,7 @@ void RecoveryManager::redo() {
                     delete_index_entries(sm_manager_, tab_name, delete_log->delete_value_);
                 }
                 if (record_exists(fh, delete_log->rid_)) {
-                    fh->delete_record(delete_log->rid_, nullptr);
-                    fh->set_page_lsn(delete_log->rid_.page_no, record->lsn_);
+                    fh->delete_record(delete_log->rid_, nullptr, record->lsn_);
                 }
             } else if (auto update_log = dynamic_cast<UpdateLogRecord *>(record.get())) {
                 std::string tab_name = table_name_from_log(update_log->table_name_, update_log->table_name_size_);
@@ -211,8 +232,7 @@ void RecoveryManager::redo() {
                     if (has_indexes) {
                         delete_index_entries(sm_manager_, tab_name, update_log->old_value_);
                     }
-                    fh->update_record(update_log->rid_, update_log->new_value_.data, nullptr);
-                    fh->set_page_lsn(update_log->rid_.page_no, record->lsn_);
+                    fh->update_record(update_log->rid_, update_log->new_value_.data, nullptr, record->lsn_);
                     if (has_indexes) {
                         insert_index_entries(sm_manager_, tab_name, update_log->new_value_, update_log->rid_);
                     }

@@ -64,6 +64,7 @@ class Transaction {
         index_latch_page_set_ = std::make_shared<std::deque<Page *>>();
         index_deleted_page_set_ = std::make_shared<std::deque<Page*>>();
         prev_lsn_ = INVALID_LSN;
+        first_lsn_ = INVALID_LSN;
         thread_id_ = std::this_thread::get_id();
     }
 
@@ -87,6 +88,8 @@ class Transaction {
 
     inline lsn_t get_prev_lsn() { return prev_lsn_; }
     inline void set_prev_lsn(lsn_t prev_lsn) { prev_lsn_ = prev_lsn; }
+    inline lsn_t get_first_lsn() { return first_lsn_; }
+    inline void set_first_lsn(lsn_t first_lsn) { first_lsn_ = first_lsn; }
 
     inline std::shared_ptr<std::deque<WriteRecord *>> get_write_set() { return write_set_; }  
     inline void append_write_record(WriteRecord* write_record) { write_set_->push_back(write_record); }
@@ -132,6 +135,7 @@ class Transaction {
     IsolationLevel isolation_level_;  // 事务的隔离级别，默认隔离级别为可串行化
     std::thread::id thread_id_;       // 当前事务对应的线程id
     lsn_t prev_lsn_;                  // 当前事务执行的最后一条操作对应的lsn，用于系统故障恢复
+    lsn_t first_lsn_;
     txn_id_t txn_id_;                 // 事务的ID，唯一标识符
     timestamp_t start_ts_;            // 事务的开始时间戳
 

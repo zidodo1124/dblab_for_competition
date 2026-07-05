@@ -110,9 +110,9 @@ void QlManager::run_cmd_utility(std::shared_ptr<Plan> plan, txn_id_t *txn_id, Co
                     if (context->txn_ != nullptr && !context->txn_->get_txn_mode()) {
                         exclude_txn_id = context->txn_->get_transaction_id();
                     }
-                    auto active_txn_ids = txn_mgr_->snapshot_active_txn_ids(exclude_txn_id);
+                    auto active_txns = txn_mgr_->snapshot_active_txns(exclude_txn_id);
                     context->log_mgr_->create_static_checkpoint(sm_manager_->get_bpm(), sm_manager_,
-                                                                std::move(active_txn_ids));
+                                                                std::move(active_txns));
                 }
                 break;
             }

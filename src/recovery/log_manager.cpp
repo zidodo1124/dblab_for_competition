@@ -8,6 +8,7 @@ EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
 MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 See the Mulan PSL v2 for more details. */
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include "log_manager.h"
@@ -17,7 +18,12 @@ See the Mulan PSL v2 for more details. */
 
 void LogManager::ensure_lsn_initialized_unlocked() {
     if (next_lsn_ == INVALID_LSN) {
-        next_lsn_ = disk_manager_->get_file_size(LOG_FILE_NAME) + log_buffer_.offset_;
+        int file_size = disk_manager_->get_file_size(LOG_FILE_NAME);
+        if (file_size < 0) {
+            file_size = 0;
+        }
+        next_lsn_ = file_size + log_buffer_.offset_;
+        persist_lsn_ = file_size == 0 ? INVALID_LSN : static_cast<lsn_t>(file_size - 1);
     }
 }
 
@@ -28,9 +34,10 @@ void LogManager::ensure_lsn_initialized_unlocked() {
  */
 lsn_t LogManager::add_log_to_buffer(LogRecord* log_record) {
     std::lock_guard<std::mutex> lock(latch_);
+    ensure_lsn_initialized_unlocked();
     if (log_buffer_.is_full(log_record->log_tot_len_)) {
-        persist_lsn_ = disk_manager_->get_file_size(LOG_FILE_NAME) + log_buffer_.offset_ - 1;
         disk_manager_->write_log(log_buffer_.buffer_, log_buffer_.offset_);
+        persist_lsn_ = next_lsn_ - 1;
         memset(log_buffer_.buffer_, 0, sizeof(log_buffer_.buffer_));
         log_buffer_.offset_ = 0;
     }
@@ -44,6 +51,7 @@ lsn_t LogManager::add_log_to_buffer(LogRecord* log_record) {
  */
 void LogManager::flush_log_to_disk() {
     std::lock_guard<std::mutex> lock(latch_);
+    ensure_lsn_initialized_unlocked();
     if (log_buffer_.offset_ == 0) {
         return;
     }
@@ -53,6 +61,26 @@ void LogManager::flush_log_to_disk() {
     }
     memset(log_buffer_.buffer_, 0, sizeof(log_buffer_.buffer_));
     log_buffer_.offset_ = 0;
+}
+
+void LogManager::flush_log_to_lsn(lsn_t lsn) {
+    std::lock_guard<std::mutex> lock(latch_);
+    ensure_lsn_initialized_unlocked();
+    if (lsn == INVALID_LSN || lsn <= persist_lsn_) {
+        return;
+    }
+    if (log_buffer_.offset_ > 0) {
+        disk_manager_->write_log(log_buffer_.buffer_, log_buffer_.offset_);
+        persist_lsn_ = next_lsn_ - 1;
+        memset(log_buffer_.buffer_, 0, sizeof(log_buffer_.buffer_));
+        log_buffer_.offset_ = 0;
+    }
+}
+
+lsn_t LogManager::get_persist_lsn() {
+    std::lock_guard<std::mutex> lock(latch_);
+    ensure_lsn_initialized_unlocked();
+    return persist_lsn_;
 }
 
 lsn_t LogManager::add_log_record(LogRecord* log_record, Transaction* txn) {
@@ -68,6 +96,9 @@ lsn_t LogManager::add_log_record(LogRecord* log_record, Transaction* txn) {
     next_lsn_ += static_cast<lsn_t>(log_record->log_tot_len_);
     if (txn != nullptr) {
         log_record->prev_lsn_ = txn->get_prev_lsn();
+        if (txn->get_first_lsn() == INVALID_LSN) {
+            txn->set_first_lsn(log_record->lsn_);
+        }
         txn->set_prev_lsn(log_record->lsn_);
     }
     log_record->serialize(log_buffer_.buffer_ + log_buffer_.offset_);
@@ -76,11 +107,16 @@ lsn_t LogManager::add_log_record(LogRecord* log_record, Transaction* txn) {
 }
 
 void LogManager::create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_manager,
-                                          std::vector<txn_id_t> active_txn_ids) {
+                                          std::vector<CheckpointTxnInfo> active_txns) {
     flush_log_to_disk();
     int checkpoint_offset = disk_manager_->get_file_size(LOG_FILE_NAME);
-    int restart_offset = active_txn_ids.empty() ? checkpoint_offset : 0;
-    CheckpointLogRecord checkpoint(std::move(active_txn_ids));
+    int restart_offset = checkpoint_offset;
+    for (const auto &active_txn : active_txns) {
+        if (active_txn.first_lsn != INVALID_LSN) {
+            restart_offset = std::min(restart_offset, static_cast<int>(active_txn.first_lsn));
+        }
+    }
+    CheckpointLogRecord checkpoint(std::move(active_txns));
     add_log_record(&checkpoint);
     flush_log_to_disk();
     sm_manager->flush_meta();

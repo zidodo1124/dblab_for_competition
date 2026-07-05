@@ -57,6 +57,7 @@ Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manage
 
     std::unique_lock<std::mutex> lock(latch_);
     TransactionManager::txn_map[txn->get_transaction_id()] = txn;
+    active_txn_ids_.insert(txn->get_transaction_id());
     {
         std::lock_guard<std::mutex> mvcc_lock(mvcc_latch_);
         ser_states_[txn->get_transaction_id()];
@@ -71,16 +72,12 @@ Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manage
 std::vector<txn_id_t> TransactionManager::snapshot_active_txn_ids(txn_id_t exclude_txn_id) {
     std::vector<txn_id_t> active_txn_ids;
     std::unique_lock<std::mutex> lock(latch_);
-    active_txn_ids.reserve(TransactionManager::txn_map.size());
-    for (const auto &entry : TransactionManager::txn_map) {
-        if (entry.first == exclude_txn_id) {
+    active_txn_ids.reserve(active_txn_ids_.size());
+    for (auto txn_id : active_txn_ids_) {
+        if (txn_id == exclude_txn_id) {
             continue;
         }
-        Transaction *txn = entry.second;
-        if (txn != nullptr && txn->get_state() != TransactionState::COMMITTED &&
-            txn->get_state() != TransactionState::ABORTED) {
-            active_txn_ids.push_back(entry.first);
-        }
+        active_txn_ids.push_back(txn_id);
     }
     return active_txn_ids;
 }
@@ -134,6 +131,7 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
     {
         std::unique_lock<std::mutex> lock(latch_);
         txn->set_state(TransactionState::COMMITTED);
+        active_txn_ids_.erase(txn->get_transaction_id());
     }
 }
 
@@ -211,6 +209,7 @@ void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
     {
         std::unique_lock<std::mutex> lock(latch_);
         txn->set_state(TransactionState::ABORTED);
+        active_txn_ids_.erase(txn->get_transaction_id());
     }
     cleanup_abort(txn);
 }

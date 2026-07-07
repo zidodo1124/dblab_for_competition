@@ -96,6 +96,7 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
     if (txn == nullptr) {
         return;
     }
+    std::unique_lock<std::mutex> write_guard(write_latch_);
     if (txn->get_state() == TransactionState::ABORTED || txn->get_state() == TransactionState::COMMITTED) {
         return;
     }
@@ -151,6 +152,7 @@ void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
     if (txn == nullptr) {
         return;
     }
+    std::unique_lock<std::mutex> write_guard(write_latch_);
     if (txn->get_state() == TransactionState::ABORTED) {
         cleanup_abort(txn);
         return;

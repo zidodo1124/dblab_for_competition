@@ -75,6 +75,7 @@ public:
         printf("log_tid: %d\n", log_tid_);
         printf("prev_lsn: %d\n", prev_lsn_);
     }
+    virtual ~LogRecord() = default;
 };
 
 class BeginLogRecord: public LogRecord {
@@ -142,6 +143,7 @@ public:
         log_tid_ = INVALID_TXN_ID;
         prev_lsn_ = INVALID_LSN;
         table_name_ = nullptr;
+        table_name_size_ = 0;
     }
     InsertLogRecord(txn_id_t txn_id, RmRecord& insert_value, Rid& rid, std::string table_name) 
         : InsertLogRecord() {
@@ -152,10 +154,14 @@ public:
         log_tot_len_ += insert_value_.size;
         log_tot_len_ += sizeof(Rid);
         table_name_size_ = table_name.length();
-        table_name_ = new char[table_name_size_];
+        table_name_ = new char[table_name_size_ + 1];
         memcpy(table_name_, table_name.c_str(), table_name_size_);
+        table_name_[table_name_size_] = '\0';
         log_tot_len_ += sizeof(size_t) + table_name_size_;
     }
+    InsertLogRecord(const InsertLogRecord&) = delete;
+    InsertLogRecord& operator=(const InsertLogRecord&) = delete;
+    ~InsertLogRecord() override { delete[] table_name_; }
 
     // 把insert日志记录序列化到dest中
     void serialize(char* dest) const override {
@@ -180,8 +186,10 @@ public:
         offset += sizeof(Rid);
         table_name_size_ = *reinterpret_cast<const size_t*>(src + offset);
         offset += sizeof(size_t);
-        table_name_ = new char[table_name_size_];
+        delete[] table_name_;
+        table_name_ = new char[table_name_size_ + 1];
         memcpy(table_name_, src + offset, table_name_size_);
+        table_name_[table_name_size_] = '\0';
     }
     void format_print() override {
         printf("insert record\n");
@@ -209,6 +217,7 @@ public:
         log_tid_ = INVALID_TXN_ID;
         prev_lsn_ = INVALID_LSN;
         table_name_ = nullptr;
+        table_name_size_ = 0;
     }
     DeleteLogRecord(txn_id_t txn_id, RmRecord& delete_value, Rid& rid, std::string table_name)
         : DeleteLogRecord() {
@@ -216,10 +225,15 @@ public:
         delete_value_ = delete_value;
         rid_ = rid;
         table_name_size_ = table_name.length();
-        table_name_ = new char[table_name_size_];
+        table_name_ = new char[table_name_size_ + 1];
         memcpy(table_name_, table_name.c_str(), table_name_size_);
+        table_name_[table_name_size_] = '\0';
         log_tot_len_ += sizeof(int) + delete_value_.size + sizeof(Rid) + sizeof(size_t) + table_name_size_;
     }
+    DeleteLogRecord(const DeleteLogRecord&) = delete;
+    DeleteLogRecord& operator=(const DeleteLogRecord&) = delete;
+    ~DeleteLogRecord() override { delete[] table_name_; }
+
     void serialize(char* dest) const override {
         LogRecord::serialize(dest);
         int offset = OFFSET_LOG_DATA;
@@ -241,8 +255,10 @@ public:
         offset += sizeof(Rid);
         table_name_size_ = *reinterpret_cast<const size_t*>(src + offset);
         offset += sizeof(size_t);
-        table_name_ = new char[table_name_size_];
+        delete[] table_name_;
+        table_name_ = new char[table_name_size_ + 1];
         memcpy(table_name_, src + offset, table_name_size_);
+        table_name_[table_name_size_] = '\0';
     }
 
     RmRecord delete_value_;
@@ -263,6 +279,7 @@ public:
         log_tid_ = INVALID_TXN_ID;
         prev_lsn_ = INVALID_LSN;
         table_name_ = nullptr;
+        table_name_size_ = 0;
     }
     UpdateLogRecord(txn_id_t txn_id, RmRecord& old_value, RmRecord& new_value, Rid& rid, std::string table_name)
         : UpdateLogRecord() {
@@ -271,11 +288,16 @@ public:
         new_value_ = new_value;
         rid_ = rid;
         table_name_size_ = table_name.length();
-        table_name_ = new char[table_name_size_];
+        table_name_ = new char[table_name_size_ + 1];
         memcpy(table_name_, table_name.c_str(), table_name_size_);
+        table_name_[table_name_size_] = '\0';
         log_tot_len_ += sizeof(int) + old_value_.size + sizeof(int) + new_value_.size +
                         sizeof(Rid) + sizeof(size_t) + table_name_size_;
     }
+    UpdateLogRecord(const UpdateLogRecord&) = delete;
+    UpdateLogRecord& operator=(const UpdateLogRecord&) = delete;
+    ~UpdateLogRecord() override { delete[] table_name_; }
+
     void serialize(char* dest) const override {
         LogRecord::serialize(dest);
         int offset = OFFSET_LOG_DATA;
@@ -303,8 +325,10 @@ public:
         offset += sizeof(Rid);
         table_name_size_ = *reinterpret_cast<const size_t*>(src + offset);
         offset += sizeof(size_t);
-        table_name_ = new char[table_name_size_];
+        delete[] table_name_;
+        table_name_ = new char[table_name_size_ + 1];
         memcpy(table_name_, src + offset, table_name_size_);
+        table_name_[table_name_size_] = '\0';
     }
 
     RmRecord old_value_;

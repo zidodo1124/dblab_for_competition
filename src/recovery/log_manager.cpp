@@ -33,17 +33,7 @@ void LogManager::ensure_lsn_initialized_unlocked() {
  * @return {lsn_t} 返回该日志的日志记录号
  */
 lsn_t LogManager::add_log_to_buffer(LogRecord* log_record) {
-    std::lock_guard<std::mutex> lock(latch_);
-    ensure_lsn_initialized_unlocked();
-    if (log_buffer_.is_full(log_record->log_tot_len_)) {
-        disk_manager_->write_log(log_buffer_.buffer_, log_buffer_.offset_);
-        persist_lsn_ = next_lsn_ - 1;
-        memset(log_buffer_.buffer_, 0, sizeof(log_buffer_.buffer_));
-        log_buffer_.offset_ = 0;
-    }
-    log_record->serialize(log_buffer_.buffer_ + log_buffer_.offset_);
-    log_buffer_.offset_ += static_cast<int>(log_record->log_tot_len_);
-    return log_record->lsn_;
+    return add_log_record(log_record);
 }
 
 /**
@@ -130,7 +120,7 @@ void LogManager::create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_
         checkpoint_fds.push_back(entry.second->get_fd());
     }
     bpm->flush_dirty_pages(checkpoint_fds, false);
-    std::ofstream restart("restart.ckpt", std::ios::trunc);
+    std::ofstream restart(RESTART_FILE_NAME, std::ios::trunc);
     restart << restart_offset;
     restart.flush();
 }

@@ -23,6 +23,20 @@ std::string table_name_from_log(const char *name, size_t size) {
     return std::string(name, size);
 }
 
+bool is_valid_log_type(LogType type) {
+    switch (type) {
+        case LogType::begin:
+        case LogType::commit:
+        case LogType::ABORT:
+        case LogType::INSERT:
+        case LogType::DELETE:
+        case LogType::UPDATE:
+        case LogType::CHECKPOINT:
+            return true;
+    }
+    return false;
+}
+
 std::unique_ptr<LogRecord> parse_log_record(const char *data) {
     LogType type = *reinterpret_cast<const LogType *>(data + OFFSET_LOG_TYPE);
     std::unique_ptr<LogRecord> record;
@@ -34,9 +48,31 @@ std::unique_ptr<LogRecord> parse_log_record(const char *data) {
         case LogType::DELETE: record = std::make_unique<DeleteLogRecord>(); break;
         case LogType::UPDATE: record = std::make_unique<UpdateLogRecord>(); break;
         case LogType::CHECKPOINT: record = std::make_unique<CheckpointLogRecord>(); break;
+        default: return nullptr;
     }
     record->deserialize(data);
     return record;
+}
+
+int read_restart_offset(DiskManager *disk_manager) {
+    auto read_offset = [](const std::string &file_name, int *offset) {
+        std::ifstream restart(file_name);
+        if (!restart.good()) {
+            return false;
+        }
+        return static_cast<bool>(restart >> *offset);
+    };
+
+    int offset = 0;
+    if (!read_offset(RESTART_FILE_NAME, &offset)) {
+        read_offset("restart.ckpt", &offset);
+    }
+    offset = std::max(0, offset);
+    int file_size = disk_manager->get_file_size(LOG_FILE_NAME);
+    if (file_size < 0) {
+        return 0;
+    }
+    return std::min(offset, file_size);
 }
 
 std::vector<char> make_index_key(const RmRecord &rec, const IndexMeta &index) {
@@ -141,39 +177,53 @@ void RecoveryManager::analyze() {
     data_logs_.clear();
     undo_txns_.clear();
     redo_txns_.clear();
-    int offset = 0;
-    std::ifstream restart("restart.ckpt");
-    if (restart.good()) {
-        restart >> offset;
-    }
     int file_size = disk_manager_->get_file_size(LOG_FILE_NAME);
-    if (file_size <= offset) {
-        log_data_.clear();
+    if (file_size <= 0) {
         return;
     }
-    log_data_.assign(file_size - offset, 0);
-    int bytes_read = disk_manager_->read_log(log_data_.data(), static_cast<int>(log_data_.size()), offset);
-    if (bytes_read < static_cast<int>(log_data_.size())) {
-        log_data_.resize(std::max(0, bytes_read));
-    }
 
-    int log_offset = 0;
-    while (log_offset + LOG_HEADER_SIZE <= static_cast<int>(log_data_.size())) {
-        auto len = *reinterpret_cast<uint32_t *>(log_data_.data() + log_offset + OFFSET_LOG_TOT_LEN);
-        if (len == 0 || log_offset + static_cast<int>(len) > static_cast<int>(log_data_.size())) {
+    int read_offset = read_restart_offset(disk_manager_);
+    char header[LOG_HEADER_SIZE];
+    while (read_offset + LOG_HEADER_SIZE <= file_size) {
+        int header_read = disk_manager_->read_log(header, LOG_HEADER_SIZE, read_offset);
+        if (header_read != LOG_HEADER_SIZE) {
             break;
         }
-        auto type = *reinterpret_cast<LogType *>(log_data_.data() + log_offset + OFFSET_LOG_TYPE);
-        auto tid = *reinterpret_cast<txn_id_t *>(log_data_.data() + log_offset + OFFSET_LOG_TID);
-        auto lsn = *reinterpret_cast<lsn_t *>(log_data_.data() + log_offset + OFFSET_LSN);
+
+        auto len = *reinterpret_cast<uint32_t *>(header + OFFSET_LOG_TOT_LEN);
+        auto type = *reinterpret_cast<LogType *>(header + OFFSET_LOG_TYPE);
+        if (len < LOG_HEADER_SIZE || read_offset + static_cast<int>(len) > file_size ||
+            !is_valid_log_type(type)) {
+            break;
+        }
+
+        std::vector<char> raw(len);
+        int bytes_read = disk_manager_->read_log(raw.data(), static_cast<int>(len), read_offset);
+        if (bytes_read != static_cast<int>(len)) {
+            break;
+        }
+
+        int stored_offset = static_cast<int>(log_data_.size());
+        log_data_.insert(log_data_.end(), raw.begin(), raw.end());
+        const char *record_data = log_data_.data() + stored_offset;
+        auto tid = *reinterpret_cast<const txn_id_t *>(record_data + OFFSET_LOG_TID);
+        auto lsn = *reinterpret_cast<const lsn_t *>(record_data + OFFSET_LSN);
         if (type == LogType::CHECKPOINT) {
-            undo_txns_.clear();
-            auto active_txns = checkpoint_active_txns(log_data_.data() + log_offset);
+            auto active_txns = checkpoint_active_txns(record_data);
+            std::unordered_set<txn_id_t> checkpoint_txns;
+            checkpoint_txns.reserve(active_txns.size());
             for (const auto &active_txn : active_txns) {
                 if (active_txn.txn_id != INVALID_TXN_ID) {
-                    undo_txns_.insert(active_txn.txn_id);
+                    checkpoint_txns.insert(active_txn.txn_id);
                 }
             }
+            data_logs_.erase(std::remove_if(data_logs_.begin(), data_logs_.end(), [&](const LogRef &log_ref) {
+                                 return checkpoint_txns.count(log_ref.tid) == 0;
+                             }),
+                             data_logs_.end());
+            redo_txns_.clear();
+            undo_txns_.clear();
+            undo_txns_.insert(checkpoint_txns.begin(), checkpoint_txns.end());
         } else if (type == LogType::begin) {
             undo_txns_.insert(tid);
         } else if (type == LogType::commit) {
@@ -183,9 +233,9 @@ void RecoveryManager::analyze() {
             undo_txns_.erase(tid);
         } else if (type == LogType::INSERT || type == LogType::DELETE || type == LogType::UPDATE) {
             undo_txns_.insert(tid);
-            data_logs_.push_back({log_offset, len, type, tid, lsn});
+            data_logs_.push_back({stored_offset, len, type, tid, lsn});
         }
-        log_offset += static_cast<int>(len);
+        read_offset += static_cast<int>(len);
     }
 }
 
@@ -196,6 +246,9 @@ void RecoveryManager::redo() {
     for (const auto &log_ref : data_logs_) {
         if (redo_txns_.count(log_ref.tid) > 0) {
             auto record = parse_log_record(log_data_.data() + log_ref.offset);
+            if (record == nullptr) {
+                continue;
+            }
             if (auto insert_log = dynamic_cast<InsertLogRecord *>(record.get())) {
                 std::string tab_name = table_name_from_log(insert_log->table_name_, insert_log->table_name_size_);
                 auto fh = sm_manager_->fhs_.at(tab_name).get();
@@ -253,6 +306,9 @@ void RecoveryManager::undo() {
             continue;
         }
         auto record = parse_log_record(log_data_.data() + log_ref.offset);
+        if (record == nullptr) {
+            continue;
+        }
         if (auto insert_log = dynamic_cast<InsertLogRecord *>(record.get())) {
             std::string tab_name = table_name_from_log(insert_log->table_name_, insert_log->table_name_size_);
             auto fh = sm_manager_->fhs_.at(tab_name).get();

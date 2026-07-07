@@ -172,70 +172,93 @@ void delete_index_entries(SmManager *sm_manager, const std::string &tab_name, co
  * @description: analyze阶段，需要获得脏页表（DPT）和未完成的事务列表（ATT）
  */
 void RecoveryManager::analyze() {
-    buffer_.offset_ = 0;
-    log_data_.clear();
-    data_logs_.clear();
-    undo_txns_.clear();
-    redo_txns_.clear();
     int file_size = disk_manager_->get_file_size(LOG_FILE_NAME);
     if (file_size <= 0) {
         return;
     }
 
-    int read_offset = read_restart_offset(disk_manager_);
-    char header[LOG_HEADER_SIZE];
-    while (read_offset + LOG_HEADER_SIZE <= file_size) {
-        int header_read = disk_manager_->read_log(header, LOG_HEADER_SIZE, read_offset);
-        if (header_read != LOG_HEADER_SIZE) {
-            break;
-        }
+    int scan_start = read_restart_offset(disk_manager_);
+    bool restarted_for_checkpoint_active_txn = false;
+    while (true) {
+        buffer_.offset_ = 0;
+        log_data_.clear();
+        data_logs_.clear();
+        undo_txns_.clear();
+        redo_txns_.clear();
 
-        auto len = *reinterpret_cast<uint32_t *>(header + OFFSET_LOG_TOT_LEN);
-        auto type = *reinterpret_cast<LogType *>(header + OFFSET_LOG_TYPE);
-        if (len < LOG_HEADER_SIZE || read_offset + static_cast<int>(len) > file_size ||
-            !is_valid_log_type(type)) {
-            break;
-        }
-
-        std::vector<char> raw(len);
-        int bytes_read = disk_manager_->read_log(raw.data(), static_cast<int>(len), read_offset);
-        if (bytes_read != static_cast<int>(len)) {
-            break;
-        }
-
-        int stored_offset = static_cast<int>(log_data_.size());
-        log_data_.insert(log_data_.end(), raw.begin(), raw.end());
-        const char *record_data = log_data_.data() + stored_offset;
-        auto tid = *reinterpret_cast<const txn_id_t *>(record_data + OFFSET_LOG_TID);
-        auto lsn = *reinterpret_cast<const lsn_t *>(record_data + OFFSET_LSN);
-        if (type == LogType::CHECKPOINT) {
-            auto active_txns = checkpoint_active_txns(record_data);
-            std::unordered_set<txn_id_t> checkpoint_txns;
-            checkpoint_txns.reserve(active_txns.size());
-            for (const auto &active_txn : active_txns) {
-                if (active_txn.txn_id != INVALID_TXN_ID) {
-                    checkpoint_txns.insert(active_txn.txn_id);
-                }
+        bool restart_scan = false;
+        int read_offset = scan_start;
+        char header[LOG_HEADER_SIZE];
+        while (read_offset + LOG_HEADER_SIZE <= file_size) {
+            int header_read = disk_manager_->read_log(header, LOG_HEADER_SIZE, read_offset);
+            if (header_read != LOG_HEADER_SIZE) {
+                break;
             }
-            data_logs_.erase(std::remove_if(data_logs_.begin(), data_logs_.end(), [&](const LogRef &log_ref) {
-                                 return checkpoint_txns.count(log_ref.tid) == 0;
-                             }),
-                             data_logs_.end());
-            redo_txns_.clear();
-            undo_txns_.clear();
-            undo_txns_.insert(checkpoint_txns.begin(), checkpoint_txns.end());
-        } else if (type == LogType::begin) {
-            undo_txns_.insert(tid);
-        } else if (type == LogType::commit) {
-            undo_txns_.erase(tid);
-            redo_txns_.insert(tid);
-        } else if (type == LogType::ABORT) {
-            undo_txns_.erase(tid);
-        } else if (type == LogType::INSERT || type == LogType::DELETE || type == LogType::UPDATE) {
-            undo_txns_.insert(tid);
-            data_logs_.push_back({stored_offset, len, type, tid, lsn});
+
+            auto len = *reinterpret_cast<uint32_t *>(header + OFFSET_LOG_TOT_LEN);
+            auto type = *reinterpret_cast<LogType *>(header + OFFSET_LOG_TYPE);
+            if (len < LOG_HEADER_SIZE || read_offset + static_cast<int>(len) > file_size ||
+                !is_valid_log_type(type)) {
+                break;
+            }
+
+            std::vector<char> raw(len);
+            int bytes_read = disk_manager_->read_log(raw.data(), static_cast<int>(len), read_offset);
+            if (bytes_read != static_cast<int>(len)) {
+                break;
+            }
+
+            int stored_offset = static_cast<int>(log_data_.size());
+            log_data_.insert(log_data_.end(), raw.begin(), raw.end());
+            const char *record_data = log_data_.data() + stored_offset;
+            auto tid = *reinterpret_cast<const txn_id_t *>(record_data + OFFSET_LOG_TID);
+            auto lsn = *reinterpret_cast<const lsn_t *>(record_data + OFFSET_LSN);
+            if (type == LogType::CHECKPOINT) {
+                auto active_txns = checkpoint_active_txns(record_data);
+                int active_restart = read_offset;
+                for (const auto &active_txn : active_txns) {
+                    if (active_txn.first_lsn != INVALID_LSN && active_txn.first_lsn < active_restart) {
+                        active_restart = static_cast<int>(active_txn.first_lsn);
+                    }
+                }
+                if (!restarted_for_checkpoint_active_txn && active_restart < scan_start) {
+                    scan_start = active_restart;
+                    restarted_for_checkpoint_active_txn = true;
+                    restart_scan = true;
+                    break;
+                }
+
+                std::unordered_set<txn_id_t> checkpoint_txns;
+                checkpoint_txns.reserve(active_txns.size());
+                for (const auto &active_txn : active_txns) {
+                    if (active_txn.txn_id != INVALID_TXN_ID) {
+                        checkpoint_txns.insert(active_txn.txn_id);
+                    }
+                }
+                data_logs_.erase(std::remove_if(data_logs_.begin(), data_logs_.end(), [&](const LogRef &log_ref) {
+                                     return checkpoint_txns.count(log_ref.tid) == 0;
+                                 }),
+                                 data_logs_.end());
+                redo_txns_.clear();
+                undo_txns_.clear();
+                undo_txns_.insert(checkpoint_txns.begin(), checkpoint_txns.end());
+            } else if (type == LogType::begin) {
+                undo_txns_.insert(tid);
+            } else if (type == LogType::commit) {
+                undo_txns_.erase(tid);
+                redo_txns_.insert(tid);
+            } else if (type == LogType::ABORT) {
+                undo_txns_.erase(tid);
+            } else if (type == LogType::INSERT || type == LogType::DELETE || type == LogType::UPDATE) {
+                undo_txns_.insert(tid);
+                data_logs_.push_back({stored_offset, len, type, tid, lsn});
+            }
+            read_offset += static_cast<int>(len);
         }
-        read_offset += static_cast<int>(len);
+
+        if (!restart_scan) {
+            break;
+        }
     }
 }
 

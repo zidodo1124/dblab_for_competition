@@ -102,24 +102,16 @@ void LogManager::create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_
     CheckpointLogRecord checkpoint(std::move(active_txns));
     lsn_t checkpoint_lsn = add_log_record(&checkpoint);
     int restart_offset = static_cast<int>(checkpoint_lsn);
-    for (const auto &active_txn : checkpoint.active_txns_) {
-        if (active_txn.first_lsn != INVALID_LSN) {
-            restart_offset = std::min(restart_offset, static_cast<int>(active_txn.first_lsn));
-        }
-    }
     flush_log_to_disk();
     sm_manager->flush_meta();
-    std::vector<int> checkpoint_fds;
-    checkpoint_fds.reserve(sm_manager->fhs_.size() + sm_manager->ihs_.size());
     for (auto &entry : sm_manager->fhs_) {
         entry.second->flush_file_hdr();
-        checkpoint_fds.push_back(entry.second->GetFd());
+        bpm->flush_all_pages(entry.second->GetFd());
     }
     for (auto &entry : sm_manager->ihs_) {
         entry.second->flush_file_hdr();
-        checkpoint_fds.push_back(entry.second->get_fd());
+        bpm->flush_all_pages(entry.second->get_fd());
     }
-    bpm->flush_dirty_pages(checkpoint_fds, false);
     std::ofstream restart(RESTART_FILE_NAME, std::ios::trunc);
     restart << restart_offset;
     restart.flush();

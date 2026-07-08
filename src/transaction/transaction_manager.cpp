@@ -49,6 +49,7 @@ void clear_write_set(Transaction *txn) {
  * @param {LogManager*} log_manager 日志管理器指针
  */
 Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manager) {
+    auto write_guard = acquire_write_latch();
     if (txn == nullptr) {
         txn = new Transaction(next_txn_id_++);
     }
@@ -74,6 +75,7 @@ Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manage
  * @param {LogManager*} log_manager 日志管理器指针
  */
 void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
+    auto write_guard = acquire_write_latch();
     if (txn == nullptr) {
         return;
     }
@@ -115,6 +117,7 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
  * @param {LogManager} *log_manager 日志管理器指针
  */
 void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
+    auto write_guard = acquire_write_latch();
     if (txn == nullptr) {
         return;
     }

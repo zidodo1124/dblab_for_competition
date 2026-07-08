@@ -108,12 +108,17 @@ void LogManager::create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_
     add_log_record(&checkpoint);
     flush_log_to_disk();
     sm_manager->flush_meta();
+    std::vector<int> flush_fds;
+    flush_fds.reserve(sm_manager->fhs_.size() + sm_manager->ihs_.size());
     for (auto &entry : sm_manager->fhs_) {
         entry.second->flush_file_hdr();
-        bpm->flush_all_pages(entry.second->GetFd());
+        flush_fds.push_back(entry.second->GetFd());
     }
     for (auto &entry : sm_manager->ihs_) {
-        bpm->flush_all_pages(entry.second->get_fd());
+        flush_fds.push_back(entry.second->get_fd());
+    }
+    if (bpm != nullptr) {
+        bpm->flush_dirty_pages(flush_fds);
     }
     for (const char *restart_name : {"db.restart", "restart.ckpt"}) {
         std::ofstream restart(restart_name, std::ios::trunc);

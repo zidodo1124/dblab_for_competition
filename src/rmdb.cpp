@@ -128,9 +128,10 @@ void SetTransaction(txn_id_t *txn_id, Context *context, IsolationLevel session_i
     }
 }
 
-void execute_parse_tree(char *data_send, int &offset, txn_id_t *txn_id, Context *context) {
+void execute_parse_tree(std::shared_ptr<ast::TreeNode> parse_tree, char *data_send, int &offset, txn_id_t *txn_id,
+                        Context *context) {
     try {
-        std::shared_ptr<Query> query = analyze->do_analyze(ast::parse_tree);
+        std::shared_ptr<Query> query = analyze->do_analyze(std::move(parse_tree));
         std::shared_ptr<Plan> plan = optimizer->plan_query(query, context);
         std::shared_ptr<PortalStmt> portalStmt = portal->start(plan, context);
         portal->run(portalStmt, ql_manager.get(), txn_id, context);
@@ -219,24 +220,27 @@ void *client_handler(void *sock_fd) {
 
         // 用于判断是否已经调用了yy_delete_buffer来删除buf
         bool finish_analyze = false;
-        ast::parse_tree.reset();
         auto show_index_table = parse_show_index_sql(data_recv);
         if (show_index_table.has_value()) {
-            ast::parse_tree = std::make_shared<ast::ShowIndex>(*show_index_table);
+            auto parse_tree = std::make_shared<ast::ShowIndex>(*show_index_table);
             finish_analyze = true;
-            execute_parse_tree(data_send, offset, &txn_id, context);
+            execute_parse_tree(std::move(parse_tree), data_send, offset, &txn_id, context);
         } else {
             pthread_mutex_lock(buffer_mutex);
+            ast::parse_tree.reset();
             YY_BUFFER_STATE buf = yy_scan_string(data_recv);
             if (yyparse() == 0) {
                 if (ast::parse_tree != nullptr) {
+                    auto parse_tree = ast::parse_tree;
+                    ast::parse_tree.reset();
                     yy_delete_buffer(buf);
                     finish_analyze = true;
                     pthread_mutex_unlock(buffer_mutex);
-                    execute_parse_tree(data_send, offset, &txn_id, context);
+                    execute_parse_tree(std::move(parse_tree), data_send, offset, &txn_id, context);
                 }
             }
             if(finish_analyze == false) {
+                ast::parse_tree.reset();
                 yy_delete_buffer(buf);
                 pthread_mutex_unlock(buffer_mutex);
                 if (should_report_parse_failure(data_recv)) {

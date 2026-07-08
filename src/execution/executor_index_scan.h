@@ -274,7 +274,7 @@ class IndexScanExecutor : public AbstractExecutor {
             }
         }
         if (context_->is_select_ && context_->txn_mgr_ != nullptr) {
-            context_->txn_mgr_->record_select_predicate(tab_name_, fed_conds_, context_->txn_);
+            context_->txn_mgr_->record_select_predicate(tab_name_, scan_conds(), context_->txn_);
         }
         advance_to_valid();
     }

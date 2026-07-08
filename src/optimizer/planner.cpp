@@ -290,9 +290,6 @@ std::shared_ptr<Plan> Planner::make_one_rel(std::shared_ptr<Query> query)
         return table_scan_executors[0];
     }
     auto join_conds = std::move(query->conds);
-    std::shared_ptr<Plan> table_join_executors = table_scan_executors[0];
-    std::set<std::string> joined{tables[0]};
-    std::vector<bool> used_cond(join_conds.size(), false);
     auto cond_tables = [](const Condition &cond) {
         std::set<std::string> result{cond.lhs_col.tab_name};
         if (!cond.is_rhs_val) {
@@ -308,9 +305,104 @@ std::shared_ptr<Plan> Planner::make_one_rel(std::shared_ptr<Query> query)
         }
         return true;
     };
+    auto real_table_name = [&](const std::string &logical_table) {
+        return query->table_real_names.count(logical_table) ? query->table_real_names.at(logical_table)
+                                                            : logical_table;
+    };
+    auto join_conds_for_inner = [&](const std::string &inner_table, const std::set<std::string> &joined_tables) {
+        std::vector<Condition> result;
+        std::set<std::string> new_joined = joined_tables;
+        new_joined.insert(inner_table);
+        for (const auto &cond : join_conds) {
+            auto cond_tabs = cond_tables(cond);
+            if (cond_tabs.find(inner_table) != cond_tabs.end() && subset(cond_tabs, new_joined)) {
+                result.push_back(cond);
+            }
+        }
+        return result;
+    };
+    auto has_probe_index = [&](const std::string &inner_table, const std::set<std::string> &joined_tables) {
+        std::vector<std::string> index_cols;
+        auto candidate_conds = join_conds_for_inner(inner_table, joined_tables);
+        return best_join_probe_index(sm_manager_, real_table_name(inner_table), inner_table,
+                                     candidate_conds, index_cols);
+    };
+    std::map<std::string, size_t> table_pos;
+    for (size_t i = 0; i < tables.size(); ++i) {
+        table_pos[tables[i]] = i;
+    }
 
-    for (size_t i = 1; i < tables.size(); ++i) {
-        const auto &right_table = tables[i];
+    std::vector<std::string> join_order;
+    std::set<std::string> remaining(tables.begin(), tables.end());
+    join_order.push_back(tables[0]);
+    remaining.erase(tables[0]);
+
+    bool original_inner_can_probe = false;
+    for (const auto &table : remaining) {
+        if (has_probe_index(table, std::set<std::string>{join_order.front()})) {
+            original_inner_can_probe = true;
+            break;
+        }
+    }
+    if (!original_inner_can_probe) {
+        bool found_indexed_pair = false;
+        for (const auto &outer : tables) {
+            for (const auto &inner : tables) {
+                if (outer == inner) {
+                    continue;
+                }
+                if (has_probe_index(inner, std::set<std::string>{outer})) {
+                    join_order.clear();
+                    join_order.push_back(outer);
+                    join_order.push_back(inner);
+                    remaining = std::set<std::string>(tables.begin(), tables.end());
+                    remaining.erase(outer);
+                    remaining.erase(inner);
+                    found_indexed_pair = true;
+                    break;
+                }
+            }
+            if (found_indexed_pair) {
+                break;
+            }
+        }
+    }
+
+    std::set<std::string> joined(join_order.begin(), join_order.end());
+    while (!remaining.empty()) {
+        auto next = remaining.end();
+        for (auto it = remaining.begin(); it != remaining.end(); ++it) {
+            if (has_probe_index(*it, joined) &&
+                (next == remaining.end() || table_pos[*it] < table_pos[*next])) {
+                next = it;
+            }
+        }
+        if (next == remaining.end()) {
+            for (auto it = remaining.begin(); it != remaining.end(); ++it) {
+                auto candidate_conds = join_conds_for_inner(*it, joined);
+                if (!candidate_conds.empty() &&
+                    (next == remaining.end() || table_pos[*it] < table_pos[*next])) {
+                    next = it;
+                }
+            }
+        }
+        if (next == remaining.end()) {
+            next = std::min_element(remaining.begin(), remaining.end(), [&](const std::string &lhs,
+                                                                            const std::string &rhs) {
+                return table_pos[lhs] < table_pos[rhs];
+            });
+        }
+        join_order.push_back(*next);
+        joined.insert(*next);
+        remaining.erase(next);
+    }
+
+    std::shared_ptr<Plan> table_join_executors = table_scan_executors[table_pos[join_order[0]]];
+    joined = {join_order[0]};
+    std::vector<bool> used_cond(join_conds.size(), false);
+
+    for (size_t i = 1; i < join_order.size(); ++i) {
+        const auto &right_table = join_order[i];
         std::set<std::string> new_joined = joined;
         new_joined.insert(right_table);
         std::vector<Condition> curr_join_conds;
@@ -324,9 +416,10 @@ std::shared_ptr<Plan> Planner::make_one_rel(std::shared_ptr<Query> query)
                 used_cond[cond_idx] = true;
             }
         }
-        promote_inner_index_scan(table_scan_executors[i], curr_join_conds, sm_manager_);
+        promote_inner_index_scan(table_scan_executors[table_pos[right_table]], curr_join_conds, sm_manager_);
         table_join_executors = std::make_shared<JoinPlan>(T_NestLoop, std::move(table_join_executors),
-                                                          table_scan_executors[i], curr_join_conds);
+                                                          table_scan_executors[table_pos[right_table]],
+                                                          curr_join_conds);
         joined = std::move(new_joined);
     }
 

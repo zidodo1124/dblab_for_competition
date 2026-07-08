@@ -105,14 +105,8 @@ void QlManager::run_cmd_utility(std::shared_ptr<Plan> plan, txn_id_t *txn_id, Co
             case T_CreateStaticCheckpoint:
             {
                 if (context->log_mgr_ != nullptr) {
-                    auto write_guard = txn_mgr_->acquire_write_latch();
-                    txn_id_t exclude_txn_id = INVALID_TXN_ID;
-                    if (context->txn_ != nullptr && !context->txn_->get_txn_mode()) {
-                        exclude_txn_id = context->txn_->get_transaction_id();
-                    }
-                    auto active_txns = txn_mgr_->snapshot_active_txns(exclude_txn_id);
-                    context->log_mgr_->create_static_checkpoint(sm_manager_->get_bpm(), sm_manager_,
-                                                                std::move(active_txns));
+                    context->log_mgr_->create_static_checkpoint(sm_manager_->get_bpm(), sm_manager_, txn_mgr_,
+                                                                context->txn_);
                 }
                 break;
             }

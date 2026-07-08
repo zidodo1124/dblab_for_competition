@@ -90,6 +90,7 @@ public:
                          const RmRecord *new_record, Transaction *txn);
     void cleanup_abort(Transaction *txn);
     void clear_table_versions(const std::string &tab_name);
+    std::vector<txn_id_t> active_txn_ids(txn_id_t exclude_txn_id = INVALID_TXN_ID);
     std::unique_lock<std::mutex> acquire_write_latch() { return std::unique_lock<std::mutex>(write_latch_); }
 
     /**

@@ -78,6 +78,10 @@ class InsertExecutor : public AbstractExecutor {
             }
             keys.push_back(std::move(key));
         }
+        if (context_->txn_ != nullptr && context_->txn_mgr_ != nullptr) {
+            Rid new_record_placeholder{-1, -1};
+            context_->txn_mgr_->check_ser_write(tab_name_, new_record_placeholder, nullptr, &rec, context_->txn_);
+        }
 
         // Insert into record file
         rid_ = fh_->insert_record(rec.data, context_);
@@ -94,7 +98,6 @@ class InsertExecutor : public AbstractExecutor {
         }
         if (context_->txn_ != nullptr) {
             if (context_->txn_mgr_ != nullptr) {
-                context_->txn_mgr_->check_ser_write(tab_name_, rid_, nullptr, &rec, context_->txn_);
                 context_->txn_mgr_->append_insert_version(tab_name_, rid_, rec, context_->txn_);
             }
             context_->txn_->append_write_record(new WriteRecord(WType::INSERT_TUPLE, tab_name_, rid_));

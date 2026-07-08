@@ -481,13 +481,30 @@ void TransactionManager::record_select_predicate(const std::string &tab_name, co
         if (entry.first.rfind(tab_name + "#", 0) != 0) {
             continue;
         }
-        for (auto &version : entry.second) {
+        auto &list = entry.second;
+        for (size_t version_idx = 0; version_idx < list.size(); ++version_idx) {
+            auto &version = list[version_idx];
             if (version.aborted || version.old_image || version.txn_id == txn->get_transaction_id()) {
                 continue;
             }
             bool invisible = !version.committed || version.commit_ts > txn->get_start_ts();
-            if (invisible && !version.deleted && record_matches(tab_name, conds, version.record) &&
-                txn_relevant_for_ser(version.txn_id, txn)) {
+            if (!invisible || !txn_relevant_for_ser(version.txn_id, txn)) {
+                continue;
+            }
+
+            bool affects_result = record_matches(tab_name, conds, version.record);
+            if (!affects_result && !version.deleted) {
+                for (size_t prev_idx = version_idx; prev_idx > 0; --prev_idx) {
+                    auto &prev = list[prev_idx - 1];
+                    if (prev.aborted || prev.old_image) {
+                        continue;
+                    }
+                    affects_result = record_matches(tab_name, conds, prev.record);
+                    break;
+                }
+            }
+
+            if (affects_result) {
                 if (add_rw_edge(txn->get_transaction_id(), version.txn_id)) {
                     throw TransactionAbortException(txn->get_transaction_id(), AbortReason::DEADLOCK_PREVENTION);
                 }

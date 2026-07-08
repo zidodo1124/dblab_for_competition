@@ -182,6 +182,57 @@ std::shared_ptr<Plan> pop_scan(int *scantbl, std::string table, std::vector<std:
     return nullptr;
 }
 
+bool choose_join_index_cols(const std::string &real_table, const std::string &logical_table,
+                            const std::vector<Condition> &join_conds,
+                            std::vector<std::string> &index_col_names, SmManager *sm_manager) {
+    index_col_names.clear();
+    const auto &tab = sm_manager->db_.get_table(real_table);
+    std::set<std::string> join_cols;
+    for (const auto &cond : join_conds) {
+        if (cond.is_rhs_val || cond.op != OP_EQ) {
+            continue;
+        }
+        if (cond.lhs_col.tab_name == logical_table) {
+            join_cols.insert(cond.lhs_col.col_name);
+        }
+        if (cond.rhs_col.tab_name == logical_table) {
+            join_cols.insert(cond.rhs_col.col_name);
+        }
+    }
+    if (join_cols.empty()) {
+        return false;
+    }
+    for (const auto &index : tab.indexes) {
+        if (!index.cols.empty() && join_cols.find(index.cols.front().name) != join_cols.end()) {
+            for (const auto &col : index.cols) {
+                index_col_names.push_back(col.name);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool mark_join_index_scan(const std::shared_ptr<Plan> &plan, const std::vector<Condition> &join_conds,
+                          SmManager *sm_manager) {
+    if (auto scan = std::dynamic_pointer_cast<ScanPlan>(plan)) {
+        std::vector<std::string> index_cols;
+        if (!choose_join_index_cols(scan->tab_name_, scan->logical_tab_name_, join_conds, index_cols, sm_manager)) {
+            return false;
+        }
+        scan->tag = T_IndexScan;
+        scan->index_col_names_ = std::move(index_cols);
+        return true;
+    }
+    if (auto filter = std::dynamic_pointer_cast<FilterPlan>(plan)) {
+        return mark_join_index_scan(filter->subplan_, join_conds, sm_manager);
+    }
+    if (auto projection = std::dynamic_pointer_cast<ProjectionPlan>(plan)) {
+        return mark_join_index_scan(projection->subplan_, join_conds, sm_manager);
+    }
+    return false;
+}
+
 
 std::shared_ptr<Query> Planner::logical_optimization(std::shared_ptr<Query> query, Context *context)
 {
@@ -267,6 +318,7 @@ std::shared_ptr<Plan> Planner::make_one_rel(std::shared_ptr<Query> query)
                 used_cond[cond_idx] = true;
             }
         }
+        mark_join_index_scan(table_scan_executors[i], curr_join_conds, sm_manager_);
         table_join_executors = std::make_shared<JoinPlan>(T_NestLoop, std::move(table_join_executors),
                                                           table_scan_executors[i], curr_join_conds);
         joined = std::move(new_joined);
@@ -479,7 +531,7 @@ bool is_subset(const std::set<std::string> &small, const std::set<std::string> &
 std::shared_ptr<Plan> build_join_plan_for_order(
     const std::vector<std::string> &join_order, const std::map<std::string, std::shared_ptr<Plan>> &table_plans,
     const std::vector<Condition> &join_conds, const std::map<std::string, std::string> &display_names,
-    const std::vector<std::string> &join_cond_right_tables, bool append_unused_conds);
+    const std::vector<std::string> &join_cond_right_tables, bool append_unused_conds, SmManager *sm_manager);
 
 int table_page_count(SmManager *sm_manager, const std::string &real_table) {
     auto it = sm_manager->fhs_.find(real_table);
@@ -526,6 +578,9 @@ std::vector<std::string> choose_join_order_for_explain(
     SmManager *sm_manager,
     Context *context) {
     if (query->tables.size() <= 1) {
+        return query->tables;
+    }
+    if (query->has_explicit_join) {
         return query->tables;
     }
 
@@ -596,7 +651,7 @@ std::vector<std::string> choose_join_order_for_explain(
 std::shared_ptr<Plan> build_join_plan_for_order(
     const std::vector<std::string> &join_order, const std::map<std::string, std::shared_ptr<Plan>> &table_plans,
     const std::vector<Condition> &join_conds, const std::map<std::string, std::string> &display_names,
-    const std::vector<std::string> &join_cond_right_tables, bool append_unused_conds) {
+    const std::vector<std::string> &join_cond_right_tables, bool append_unused_conds, SmManager *sm_manager) {
     std::shared_ptr<Plan> root = table_plans.at(join_order[0]);
     std::set<std::string> joined{join_order[0]};
     std::vector<bool> used_join_cond(join_conds.size(), false);
@@ -625,6 +680,7 @@ std::shared_ptr<Plan> build_join_plan_for_order(
                 used_join_cond[cond_idx] = true;
             }
         }
+        mark_join_index_scan(table_plans.at(right_table), curr_join_conds, sm_manager);
         root = std::make_shared<JoinPlan>(T_NestLoop, std::move(root), table_plans.at(right_table),
                                           curr_join_conds, display_names);
         joined = std::move(new_joined);
@@ -658,7 +714,7 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         auto tables = condition_tables(cond);
         if (tables.size() == 1) {
             local_conds[*tables.begin()].push_back(cond);
-        } else if (is_on_cond || !query->has_explicit_join) {
+        } else if (is_on_cond || !query->has_explicit_join || (!cond.is_rhs_val && cond.op == OP_EQ)) {
             join_conds.push_back(cond);
             join_cond_right_tables.push_back(join_owner_table);
         } else {
@@ -710,9 +766,11 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
         std::vector<std::string> index_cols;
         std::string real_table = query->table_real_names.count(tab_name) ? query->table_real_names.at(tab_name)
                                                                          : tab_name;
+        bool index_exist = get_index_cols(real_table, local_conds[tab_name], index_cols, tab_name);
         std::shared_ptr<Plan> plan =
-            std::make_shared<ScanPlan>(T_SeqScan, sm_manager_, real_table, std::vector<Condition>(), index_cols,
-                                       tab_name, real_table);
+            std::make_shared<ScanPlan>(index_exist ? T_IndexScan : T_SeqScan, sm_manager_, real_table,
+                                       index_exist ? local_conds[tab_name] : std::vector<Condition>(),
+                                       index_cols, tab_name, real_table);
         if (!local_conds[tab_name].empty()) {
             plan = std::make_shared<FilterPlan>(T_Filter, std::move(plan), local_conds[tab_name],
                                                 query->tab_display_names);
@@ -727,7 +785,7 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
     std::vector<std::string> join_order =
         choose_join_order_for_explain(query, join_conds, sm_manager_, context);
     std::shared_ptr<Plan> root = build_join_plan_for_order(
-        join_order, table_plans, join_conds, query->tab_display_names, join_cond_right_tables, true);
+        join_order, table_plans, join_conds, query->tab_display_names, join_cond_right_tables, true, sm_manager_);
     if (!post_join_conds.empty()) {
         root = std::make_shared<FilterPlan>(T_Filter, std::move(root), post_join_conds,
                                             query->tab_display_names);

@@ -13,6 +13,7 @@ See the Mulan PSL v2 for more details. */
 #include <algorithm>
 #include <limits>
 #include <map>
+#include <sstream>
 
 #include "execution_defs.h"
 #include "execution_manager.h"
@@ -32,6 +33,7 @@ class IndexScanExecutor : public AbstractExecutor {
     std::vector<ColMeta> cols_;
     size_t len_;
     std::vector<Condition> fed_conds_;
+    std::vector<Condition> runtime_conds_;
 
     std::vector<std::string> index_col_names_;
     IndexMeta index_meta_;
@@ -72,19 +74,30 @@ class IndexScanExecutor : public AbstractExecutor {
             memcpy(buf, cond.rhs_val.raw->data, col.len);
             return;
         }
-        if (cond.rhs_val.type == TYPE_INT) {
-            memcpy(buf, &cond.rhs_val.int_val, sizeof(int));
-        } else if (cond.rhs_val.type == TYPE_FLOAT) {
-            memcpy(buf, &cond.rhs_val.float_val, sizeof(float));
+        if (col.type == TYPE_INT) {
+            int v = cond.rhs_val.type == TYPE_FLOAT ? static_cast<int>(cond.rhs_val.float_val)
+                                                     : cond.rhs_val.int_val;
+            memcpy(buf, &v, sizeof(int));
+        } else if (col.type == TYPE_FLOAT) {
+            float v = cond.rhs_val.type == TYPE_INT ? static_cast<float>(cond.rhs_val.int_val)
+                                                     : cond.rhs_val.float_val;
+            memcpy(buf, &v, sizeof(float));
         } else {
             memset(buf, 0, col.len);
             memcpy(buf, cond.rhs_val.str_val.c_str(), std::min<int>(col.len, cond.rhs_val.str_val.size()));
         }
     }
 
+    std::vector<Condition> active_conds() const {
+        std::vector<Condition> conds = fed_conds_;
+        conds.insert(conds.end(), runtime_conds_.begin(), runtime_conds_.end());
+        return conds;
+    }
+
     std::vector<Condition> normalized_value_conds() {
+        auto conds = active_conds();
         std::vector<Condition> normalized;
-        for (auto cond : fed_conds_) {
+        for (auto cond : conds) {
             if (!cond.is_rhs_val) {
                 continue;
             }
@@ -174,11 +187,50 @@ class IndexScanExecutor : public AbstractExecutor {
     void advance_to_valid() {
         while (cursor_ < visible_records_.size()) {
             rid_ = visible_records_[cursor_].first;
-            if (eval_conds(cols_, fed_conds_, &visible_records_[cursor_].second)) {
+            rows_++;
+            auto conds = active_conds();
+            if (eval_conds(cols_, conds, &visible_records_[cursor_].second)) {
                 return;
             }
             cursor_++;
         }
+    }
+
+    bool make_runtime_condition(const Condition &join_cond, const std::vector<ColMeta> &outer_cols,
+                                const RmRecord *outer_rec, Condition &runtime_cond) {
+        if (join_cond.is_rhs_val || join_cond.op != OP_EQ) {
+            return false;
+        }
+
+        TabCol inner_col;
+        TabCol outer_col;
+        if (join_cond.lhs_col.tab_name == logical_tab_name_) {
+            inner_col = join_cond.lhs_col;
+            outer_col = join_cond.rhs_col;
+        } else if (join_cond.rhs_col.tab_name == logical_tab_name_) {
+            inner_col = join_cond.rhs_col;
+            outer_col = join_cond.lhs_col;
+        } else {
+            return false;
+        }
+
+        const auto outer_meta = get_col(outer_cols, outer_col);
+        runtime_cond.lhs_col = inner_col;
+        runtime_cond.op = OP_EQ;
+        runtime_cond.is_rhs_val = true;
+        runtime_cond.rhs_col = {};
+        runtime_cond.rhs_val.raw = nullptr;
+        if (outer_meta->type == TYPE_INT) {
+            runtime_cond.rhs_val.set_int(*(int *)(outer_rec->data + outer_meta->offset));
+        } else if (outer_meta->type == TYPE_FLOAT) {
+            runtime_cond.rhs_val.set_float(*(float *)(outer_rec->data + outer_meta->offset));
+        } else {
+            std::string value(outer_rec->data + outer_meta->offset, outer_meta->len);
+            value.resize(strlen(value.c_str()));
+            runtime_cond.rhs_val.set_str(value);
+        }
+        runtime_cond.rhs_val.init_raw(outer_meta->len);
+        return true;
     }
 
    public:
@@ -206,12 +258,17 @@ class IndexScanExecutor : public AbstractExecutor {
     void beginTuple() override {
         visible_records_.clear();
         cursor_ = 0;
-        if (context_->txn_mgr_ != nullptr) {
-            visible_records_ = context_->txn_mgr_->get_visible_records(tab_name_, fh_, context_);
-        } else {
-            for (RmScan scan(fh_); !scan.is_end(); scan.next()) {
-                auto rec = fh_->get_record(scan.rid(), context_);
-                visible_records_.emplace_back(scan.rid(), *rec);
+        Iid lower;
+        Iid upper;
+        build_index_range(lower, upper);
+        for (IxScan scan(ih_, lower, upper, sm_manager_->get_bpm()); !scan.is_end(); scan.next()) {
+            Rid candidate = scan.rid();
+            std::unique_ptr<RmRecord> rec =
+                context_->txn_mgr_ != nullptr
+                    ? context_->txn_mgr_->get_visible_record(tab_name_, candidate, fh_, context_)
+                    : fh_->get_record(candidate, context_);
+            if (rec != nullptr) {
+                visible_records_.emplace_back(candidate, *rec);
             }
         }
         if (context_->is_select_ && context_->txn_mgr_ != nullptr) {
@@ -247,4 +304,33 @@ class IndexScanExecutor : public AbstractExecutor {
     ColMeta get_col_offset(const TabCol &target) override { return *get_col(cols_, target); }
 
     Rid &rid() override { return rid_; }
+
+    std::vector<std::string> tables() const override { return {logical_tab_name_}; }
+
+    bool set_join_key(const std::vector<Condition> &join_conds, const std::vector<ColMeta> &outer_cols,
+                      const RmRecord *outer_rec) override {
+        runtime_conds_.clear();
+        bool matched = false;
+        for (const auto &cond : join_conds) {
+            Condition runtime_cond;
+            if (make_runtime_condition(cond, outer_cols, outer_rec, runtime_cond)) {
+                runtime_conds_.push_back(std::move(runtime_cond));
+                matched = true;
+            }
+        }
+        return matched;
+    }
+
+    std::string explain(int depth = 0) const override {
+        std::ostringstream os;
+        os << indent(depth) << "Scan(table=" << tab_name_ << ", type=IndexScan, using_index=(";
+        for (size_t i = 0; i < index_col_names_.size(); ++i) {
+            if (i > 0) {
+                os << ", ";
+            }
+            os << index_col_names_[i];
+        }
+        os << "), rows=" << rows_ << ")\n";
+        return os.str();
+    }
 };

@@ -48,6 +48,8 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
             }
             left_->nextTuple();
             if (!left_->is_end()) {
+                auto left_rec = left_->Next();
+                right_->set_join_key(fed_conds_, left_->cols(), left_rec.get());
                 right_->beginTuple();
             }
         }
@@ -80,6 +82,8 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
             isend = true;
             return;
         }
+        auto left_rec = left_->Next();
+        right_->set_join_key(fed_conds_, left_->cols(), left_rec.get());
         right_->beginTuple();
         // Even when the inner side is empty after its own filters, keep
         // advancing the outer side so EXPLAIN row counts include each inner run.

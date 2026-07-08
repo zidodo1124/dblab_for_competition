@@ -17,6 +17,7 @@ See the Mulan PSL v2 for more details. */
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cstdlib>
 #include <fstream>
 #include <map>
 #include <optional>
@@ -291,7 +292,14 @@ void start_server() {
     memset(&s_addr_in, 0, sizeof(s_addr_in));
     s_addr_in.sin_family = AF_INET;
     s_addr_in.sin_addr.s_addr = htonl(INADDR_ANY);
-    s_addr_in.sin_port = htons(SOCK_PORT);
+    int sock_port = SOCK_PORT;
+    if (const char *env_port = std::getenv("RMDB_PORT")) {
+        int parsed_port = std::atoi(env_port);
+        if (parsed_port > 0 && parsed_port <= 65535) {
+            sock_port = parsed_port;
+        }
+    }
+    s_addr_in.sin_port = htons(sock_port);
     fd_temp = bind(sockfd_server, (struct sockaddr *)(&s_addr_in), sizeof(s_addr_in));
     if (fd_temp == -1) {
         std::cout << "Bind error!" << std::endl;

@@ -1,0 +1,38 @@
+Gate4 查询优化与 EXPLAIN ANALYZE 相关源码文件清单
+
+1. src/parser/parser_defs.h
+2. src/parser/ast.h
+3. src/parser/ast.cpp
+4. src/parser/lex.l
+5. src/parser/yacc.y
+6. src/parser/yacc.tab.cpp
+7. src/parser/yacc.tab.h
+8. src/parser/yacc.tab.hpp
+9. src/parser/lex.yy.cpp
+10. src/parser/lex.yy.hpp
+
+11. src/analyze/analyze.h
+12. src/analyze/analyze.cpp
+
+13. src/optimizer/planner.h
+14. src/optimizer/planner.cpp
+15. src/optimizer/optimizer.h
+16. src/optimizer/plan.h
+
+17. src/execution/execution_manager.h
+18. src/execution/execution_manager.cpp
+19. src/execution/executor_abstract.h
+20. src/execution/executor_seq_scan.h
+21. src/execution/executor_filter.h
+22. src/execution/executor_projection.h
+23. src/execution/executor_nestedloop_join.h
+24. src/execution/executor_index_scan.h
+25. src/execution/execution_sort.h
+26. src/execution/executor_limit.h
+
+27. src/portal.h
+
+说明：
+- gate4 的核心主要集中在 planner.cpp、plan.h、execution_manager.cpp、executor_seq_scan.h、executor_filter.h、executor_projection.h、executor_nestedloop_join.h、executor_abstract.h。
+- parser/analyze 相关文件主要用于支持 EXPLAIN ANALYZE、JOIN/ON、别名、ORDER BY/LIMIT 等语法和语义信息传递。
+- executor_index_scan.h 是后来为了 gate3/gate7 索引扫描与 EXPLAIN 输出一致性一起改动过的文件，可能会影响 gate4 的 explain 路径。

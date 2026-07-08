@@ -45,6 +45,10 @@ class AbstractExecutor {
 
     virtual std::vector<std::string> tables() const { return {}; }
 
+    virtual bool set_join_key(const std::vector<Condition> &, const std::vector<ColMeta> &, const RmRecord *) {
+        return false;
+    }
+
     virtual std::string format_record_value(const ColMeta &col, const char *rec_buf) const {
         if (col.type == TYPE_INT) {
             return std::to_string(*(int *)rec_buf);

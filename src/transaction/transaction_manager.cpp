@@ -59,7 +59,11 @@ Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manage
     TransactionManager::txn_map[txn->get_transaction_id()] = txn;
     {
         std::lock_guard<std::mutex> mvcc_lock(mvcc_latch_);
-        ser_states_[txn->get_transaction_id()];
+        auto &ser_state = ser_states_[txn->get_transaction_id()];
+        ser_state.start_ts = txn->get_start_ts();
+        ser_state.committed = false;
+        ser_state.aborted = false;
+        ser_state.commit_ts = INVALID_TS;
     }
     if (log_manager != nullptr) {
         BeginLogRecord log_record(txn->get_transaction_id());
@@ -560,7 +564,50 @@ bool TransactionManager::add_rw_edge(txn_id_t reader, txn_id_t writer) {
     if (!inserted) {
         return false;
     }
-    return creates_rw_cycle(reader, writer);
+    return creates_dangerous_structure(reader, writer);
+}
+
+bool TransactionManager::dangerous_commit_order(txn_id_t tin, txn_id_t tout) {
+    if (tin == tout) {
+        return true;
+    }
+    auto tout_it = ser_states_.find(tout);
+    if (tout_it == ser_states_.end() || !tout_it->second.committed) {
+        return false;
+    }
+    auto tin_it = ser_states_.find(tin);
+    if (tin_it == ser_states_.end() || !tin_it->second.committed) {
+        return true;
+    }
+    return tout_it->second.commit_ts < tin_it->second.commit_ts;
+}
+
+bool TransactionManager::creates_dangerous_structure(txn_id_t reader, txn_id_t writer) {
+    if (creates_rw_cycle(reader, writer)) {
+        return true;
+    }
+
+    // Existing Tin -> reader plus new reader -> writer.
+    for (const auto &entry : rw_edges_) {
+        txn_id_t tin = entry.first;
+        if (tin == reader) {
+            continue;
+        }
+        if (entry.second.find(reader) != entry.second.end() && dangerous_commit_order(tin, writer)) {
+            return true;
+        }
+    }
+
+    // New reader -> writer plus existing writer -> Tout.
+    auto writer_out = rw_edges_.find(writer);
+    if (writer_out != rw_edges_.end()) {
+        for (txn_id_t tout : writer_out->second) {
+            if (dangerous_commit_order(reader, tout)) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 bool TransactionManager::creates_rw_cycle(txn_id_t from, txn_id_t to) {

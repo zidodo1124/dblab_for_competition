@@ -182,6 +182,7 @@ private:
     struct TxnSerState {
         std::set<std::pair<std::string, int64_t>> read_records;
         std::vector<PredicateRead> predicates;
+        timestamp_t start_ts{INVALID_TS};
         bool committed{false};
         bool aborted{false};
         timestamp_t commit_ts{INVALID_TS};
@@ -196,6 +197,8 @@ private:
     bool record_matches(const std::string &tab_name, const std::vector<Condition> &conds, const RmRecord &record);
     bool add_rw_edge(txn_id_t reader, txn_id_t writer);
     bool creates_rw_cycle(txn_id_t from, txn_id_t to);
+    bool creates_dangerous_structure(txn_id_t reader, txn_id_t writer);
+    bool dangerous_commit_order(txn_id_t tin, txn_id_t tout);
     bool txn_relevant_for_ser(txn_id_t txn_id, Transaction *current);
 
     ConcurrencyMode concurrency_mode_;      // 事务使用的并发控制算法，目前只需要考虑2PL

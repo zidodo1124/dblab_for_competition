@@ -75,6 +75,7 @@ public:
         printf("log_tid: %d\n", log_tid_);
         printf("prev_lsn: %d\n", prev_lsn_);
     }
+    virtual ~LogRecord() = default;
 };
 
 class BeginLogRecord: public LogRecord {
@@ -142,8 +143,9 @@ public:
         log_tid_ = INVALID_TXN_ID;
         prev_lsn_ = INVALID_LSN;
         table_name_ = nullptr;
+        table_name_size_ = 0;
     }
-    InsertLogRecord(txn_id_t txn_id, RmRecord& insert_value, Rid& rid, std::string table_name) 
+    InsertLogRecord(txn_id_t txn_id, RmRecord& insert_value, Rid& rid, std::string table_name)
         : InsertLogRecord() {
         log_tid_ = txn_id;
         insert_value_ = insert_value;
@@ -152,10 +154,14 @@ public:
         log_tot_len_ += insert_value_.size;
         log_tot_len_ += sizeof(Rid);
         table_name_size_ = table_name.length();
-        table_name_ = new char[table_name_size_];
+        table_name_ = new char[table_name_size_ + 1];
         memcpy(table_name_, table_name.c_str(), table_name_size_);
+        table_name_[table_name_size_] = '\0';
         log_tot_len_ += sizeof(size_t) + table_name_size_;
     }
+    InsertLogRecord(const InsertLogRecord&) = delete;
+    InsertLogRecord& operator=(const InsertLogRecord&) = delete;
+    ~InsertLogRecord() override { delete[] table_name_; }
 
     // 把insert日志记录序列化到dest中
     void serialize(char* dest) const override {
@@ -173,15 +179,17 @@ public:
     }
     // 从src中反序列化出一条Insert日志记录
     void deserialize(const char* src) override {
-        LogRecord::deserialize(src);  
+        LogRecord::deserialize(src);
         insert_value_.Deserialize(src + OFFSET_LOG_DATA);
         int offset = OFFSET_LOG_DATA + insert_value_.size + sizeof(int);
         rid_ = *reinterpret_cast<const Rid*>(src + offset);
         offset += sizeof(Rid);
         table_name_size_ = *reinterpret_cast<const size_t*>(src + offset);
         offset += sizeof(size_t);
-        table_name_ = new char[table_name_size_];
+        delete[] table_name_;
+        table_name_ = new char[table_name_size_ + 1];
         memcpy(table_name_, src + offset, table_name_size_);
+        table_name_[table_name_size_] = '\0';
     }
     void format_print() override {
         printf("insert record\n");
@@ -209,6 +217,7 @@ public:
         log_tid_ = INVALID_TXN_ID;
         prev_lsn_ = INVALID_LSN;
         table_name_ = nullptr;
+        table_name_size_ = 0;
     }
     DeleteLogRecord(txn_id_t txn_id, RmRecord& delete_value, Rid& rid, std::string table_name)
         : DeleteLogRecord() {
@@ -216,10 +225,15 @@ public:
         delete_value_ = delete_value;
         rid_ = rid;
         table_name_size_ = table_name.length();
-        table_name_ = new char[table_name_size_];
+        table_name_ = new char[table_name_size_ + 1];
         memcpy(table_name_, table_name.c_str(), table_name_size_);
+        table_name_[table_name_size_] = '\0';
         log_tot_len_ += sizeof(int) + delete_value_.size + sizeof(Rid) + sizeof(size_t) + table_name_size_;
     }
+    DeleteLogRecord(const DeleteLogRecord&) = delete;
+    DeleteLogRecord& operator=(const DeleteLogRecord&) = delete;
+    ~DeleteLogRecord() override { delete[] table_name_; }
+
     void serialize(char* dest) const override {
         LogRecord::serialize(dest);
         int offset = OFFSET_LOG_DATA;
@@ -241,8 +255,10 @@ public:
         offset += sizeof(Rid);
         table_name_size_ = *reinterpret_cast<const size_t*>(src + offset);
         offset += sizeof(size_t);
-        table_name_ = new char[table_name_size_];
+        delete[] table_name_;
+        table_name_ = new char[table_name_size_ + 1];
         memcpy(table_name_, src + offset, table_name_size_);
+        table_name_[table_name_size_] = '\0';
     }
 
     RmRecord delete_value_;
@@ -263,6 +279,7 @@ public:
         log_tid_ = INVALID_TXN_ID;
         prev_lsn_ = INVALID_LSN;
         table_name_ = nullptr;
+        table_name_size_ = 0;
     }
     UpdateLogRecord(txn_id_t txn_id, RmRecord& old_value, RmRecord& new_value, Rid& rid, std::string table_name)
         : UpdateLogRecord() {
@@ -271,11 +288,16 @@ public:
         new_value_ = new_value;
         rid_ = rid;
         table_name_size_ = table_name.length();
-        table_name_ = new char[table_name_size_];
+        table_name_ = new char[table_name_size_ + 1];
         memcpy(table_name_, table_name.c_str(), table_name_size_);
+        table_name_[table_name_size_] = '\0';
         log_tot_len_ += sizeof(int) + old_value_.size + sizeof(int) + new_value_.size +
                         sizeof(Rid) + sizeof(size_t) + table_name_size_;
     }
+    UpdateLogRecord(const UpdateLogRecord&) = delete;
+    UpdateLogRecord& operator=(const UpdateLogRecord&) = delete;
+    ~UpdateLogRecord() override { delete[] table_name_; }
+
     void serialize(char* dest) const override {
         LogRecord::serialize(dest);
         int offset = OFFSET_LOG_DATA;
@@ -303,8 +325,10 @@ public:
         offset += sizeof(Rid);
         table_name_size_ = *reinterpret_cast<const size_t*>(src + offset);
         offset += sizeof(size_t);
-        table_name_ = new char[table_name_size_];
+        delete[] table_name_;
+        table_name_ = new char[table_name_size_ + 1];
         memcpy(table_name_, src + offset, table_name_size_);
+        table_name_[table_name_size_] = '\0';
     }
 
     RmRecord old_value_;
@@ -312,6 +336,11 @@ public:
     Rid rid_;
     char* table_name_;
     size_t table_name_size_;
+};
+
+struct CheckpointTxnInfo {
+    txn_id_t txn_id{INVALID_TXN_ID};
+    lsn_t first_lsn{INVALID_LSN};
 };
 
 class CheckpointLogRecord: public LogRecord {
@@ -323,38 +352,62 @@ public:
         log_tid_ = INVALID_TXN_ID;
         prev_lsn_ = INVALID_LSN;
     }
-    explicit CheckpointLogRecord(std::vector<txn_id_t> active_txn_ids) : CheckpointLogRecord() {
-        active_txn_ids_ = std::move(active_txn_ids);
-        log_tot_len_ += sizeof(uint32_t) + active_txn_ids_.size() * sizeof(txn_id_t);
+    explicit CheckpointLogRecord(std::vector<CheckpointTxnInfo> active_txns) : CheckpointLogRecord() {
+        active_txns_ = std::move(active_txns);
+        log_tot_len_ += sizeof(uint32_t) + active_txns_.size() * (sizeof(txn_id_t) + sizeof(lsn_t));
     }
 
     void serialize(char* dest) const override {
         LogRecord::serialize(dest);
         int offset = OFFSET_LOG_DATA;
-        uint32_t active_count = static_cast<uint32_t>(active_txn_ids_.size());
+        uint32_t active_count = static_cast<uint32_t>(active_txns_.size());
         memcpy(dest + offset, &active_count, sizeof(uint32_t));
         offset += sizeof(uint32_t);
-        if (active_count > 0) {
-            memcpy(dest + offset, active_txn_ids_.data(), active_count * sizeof(txn_id_t));
+        for (const auto &active_txn : active_txns_) {
+            memcpy(dest + offset, &active_txn.txn_id, sizeof(txn_id_t));
+            offset += sizeof(txn_id_t);
+            memcpy(dest + offset, &active_txn.first_lsn, sizeof(lsn_t));
+            offset += sizeof(lsn_t);
         }
     }
 
     void deserialize(const char* src) override {
         LogRecord::deserialize(src);
-        active_txn_ids_.clear();
+        active_txns_.clear();
         if (log_tot_len_ <= LOG_HEADER_SIZE) {
             return;
         }
         int offset = OFFSET_LOG_DATA;
         uint32_t active_count = *reinterpret_cast<const uint32_t*>(src + offset);
         offset += sizeof(uint32_t);
-        active_txn_ids_.resize(active_count);
-        if (active_count > 0) {
-            memcpy(active_txn_ids_.data(), src + offset, active_count * sizeof(txn_id_t));
+        int remaining = static_cast<int>(log_tot_len_) - offset;
+        int new_payload_size = static_cast<int>(active_count * (sizeof(txn_id_t) + sizeof(lsn_t)));
+        int old_payload_size = static_cast<int>(active_count * sizeof(txn_id_t));
+        if (remaining < old_payload_size) {
+            return;
+        }
+        active_txns_.reserve(active_count);
+        if (remaining >= new_payload_size) {
+            for (uint32_t i = 0; i < active_count; ++i) {
+                CheckpointTxnInfo active_txn;
+                active_txn.txn_id = *reinterpret_cast<const txn_id_t*>(src + offset);
+                offset += sizeof(txn_id_t);
+                active_txn.first_lsn = *reinterpret_cast<const lsn_t*>(src + offset);
+                offset += sizeof(lsn_t);
+                active_txns_.push_back(active_txn);
+            }
+        } else {
+            for (uint32_t i = 0; i < active_count; ++i) {
+                CheckpointTxnInfo active_txn;
+                active_txn.txn_id = *reinterpret_cast<const txn_id_t*>(src + offset);
+                offset += sizeof(txn_id_t);
+                active_txn.first_lsn = INVALID_LSN;
+                active_txns_.push_back(active_txn);
+            }
         }
     }
 
-    std::vector<txn_id_t> active_txn_ids_;
+    std::vector<CheckpointTxnInfo> active_txns_;
 };
 
 /* 日志缓冲区，只有一个buffer，因此需要阻塞地去把日志写入缓冲区中 */
@@ -383,15 +436,21 @@ public:
     
     lsn_t add_log_to_buffer(LogRecord* log_record);
     void flush_log_to_disk();
+    void flush_log_to_lsn(lsn_t lsn);
+    lsn_t get_persist_lsn();
     lsn_t add_log_record(LogRecord* log_record, Transaction* txn = nullptr);
-    void create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_manager);
+    void create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_manager,
+                                  std::vector<CheckpointTxnInfo> active_txns = {});
 
     LogBuffer* get_log_buffer() { return &log_buffer_; }
 
-private:    
+private:
+    void ensure_lsn_initialized_unlocked();
+
     std::atomic<lsn_t> global_lsn_{0};  // 全局lsn，递增，用于为每条记录分发lsn
+    lsn_t next_lsn_{INVALID_LSN};        // 下一条日志在日志文件中的逻辑偏移
     std::mutex latch_;                  // 用于对log_buffer_的互斥访问
     LogBuffer log_buffer_;              // 日志缓冲区
-    lsn_t persist_lsn_;                 // 记录已经持久化到磁盘中的最后一条日志的日志号
+    lsn_t persist_lsn_{INVALID_LSN};    // 记录已经持久化到磁盘中的最后一条日志的日志号
     DiskManager* disk_manager_;
 }; 

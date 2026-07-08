@@ -9,6 +9,7 @@ MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 See the Mulan PSL v2 for more details. */
 
 #include "rm_file_handle.h"
+#include "common/context.h"
 
 /**
  * @description: 获取当前表中记录号为rid的记录
@@ -26,6 +27,17 @@ std::unique_ptr<RmRecord> RmFileHandle::get_record(const Rid& rid, Context* cont
     auto record = std::make_unique<RmRecord>(file_hdr_.record_size, page_handle.get_slot(rid.slot_no));
     buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), false);
     return record;
+}
+
+Rid RmFileHandle::get_next_insert_rid() {
+    if (file_hdr_.first_free_page_no == RM_NO_PAGE) {
+        return Rid{file_hdr_.num_pages, 0};
+    }
+    RmPageHandle page_handle = fetch_page_handle(file_hdr_.first_free_page_no);
+    int slot_no = Bitmap::first_bit(false, page_handle.bitmap, file_hdr_.num_records_per_page);
+    Rid rid{page_handle.page->get_page_id().page_no, slot_no};
+    buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), false);
+    return rid;
 }
 
 /**
@@ -47,6 +59,9 @@ Rid RmFileHandle::insert_record(char* buf, Context* context) {
         page_handle.page_hdr->next_free_page_no = RM_NO_PAGE;
     }
 
+    if (context != nullptr && context->txn_ != nullptr && context->txn_->get_prev_lsn() != INVALID_LSN) {
+        page_handle.page->set_page_lsn(context->txn_->get_prev_lsn());
+    }
     Rid rid{page_handle.page->get_page_id().page_no, slot_no};
     buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), true);
     return rid;
@@ -57,7 +72,7 @@ Rid RmFileHandle::insert_record(char* buf, Context* context) {
  * @param {Rid&} rid 要插入记录的位置
  * @param {char*} buf 要插入记录的数据
  */
-void RmFileHandle::insert_record(const Rid& rid, char* buf) {
+void RmFileHandle::insert_record(const Rid& rid, char* buf, lsn_t page_lsn) {
     while (rid.page_no >= file_hdr_.num_pages) {
         RmPageHandle new_page = create_new_page_handle();
         buffer_pool_manager_->unpin_page(new_page.page->get_page_id(), true);
@@ -73,6 +88,9 @@ void RmFileHandle::insert_record(const Rid& rid, char* buf) {
     memcpy(page_handle.get_slot(rid.slot_no), buf, file_hdr_.record_size);
     Bitmap::set(page_handle.bitmap, rid.slot_no);
     page_handle.page_hdr->num_records++;
+    if (page_lsn != INVALID_LSN) {
+        page_handle.page->set_page_lsn(page_lsn);
+    }
     if (!was_full && page_handle.page_hdr->num_records == file_hdr_.num_records_per_page) {
         int next_free_page_no = page_handle.page_hdr->next_free_page_no;
         page_handle.page_hdr->next_free_page_no = RM_NO_PAGE;
@@ -99,12 +117,25 @@ void RmFileHandle::insert_record(const Rid& rid, char* buf) {
     buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), true);
 }
 
+lsn_t RmFileHandle::get_page_lsn(int page_no) const {
+    RmPageHandle page_handle = fetch_page_handle(page_no);
+    lsn_t lsn = page_handle.page->get_page_lsn();
+    buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), false);
+    return lsn;
+}
+
+void RmFileHandle::set_page_lsn(int page_no, lsn_t lsn) {
+    RmPageHandle page_handle = fetch_page_handle(page_no);
+    page_handle.page->set_page_lsn(lsn);
+    buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), true);
+}
+
 /**
  * @description: 删除记录文件中记录号为rid的记录
  * @param {Rid&} rid 要删除的记录的记录号（位置）
  * @param {Context*} context
  */
-void RmFileHandle::delete_record(const Rid& rid, Context* context) {
+void RmFileHandle::delete_record(const Rid& rid, Context* context, lsn_t page_lsn) {
     RmPageHandle page_handle = fetch_page_handle(rid.page_no);
     if (rid.slot_no < 0 || rid.slot_no >= file_hdr_.num_records_per_page ||
         !Bitmap::is_set(page_handle.bitmap, rid.slot_no)) {
@@ -118,6 +149,12 @@ void RmFileHandle::delete_record(const Rid& rid, Context* context) {
     if (was_full) {
         release_page_handle(page_handle);
     }
+    if (page_lsn == INVALID_LSN && context != nullptr && context->txn_ != nullptr) {
+        page_lsn = context->txn_->get_prev_lsn();
+    }
+    if (page_lsn != INVALID_LSN) {
+        page_handle.page->set_page_lsn(page_lsn);
+    }
     buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), true);
 }
 
@@ -128,7 +165,7 @@ void RmFileHandle::delete_record(const Rid& rid, Context* context) {
  * @param {char*} buf 新记录的数据
  * @param {Context*} context
  */
-void RmFileHandle::update_record(const Rid& rid, char* buf, Context* context) {
+void RmFileHandle::update_record(const Rid& rid, char* buf, Context* context, lsn_t page_lsn) {
     RmPageHandle page_handle = fetch_page_handle(rid.page_no);
     if (rid.slot_no < 0 || rid.slot_no >= file_hdr_.num_records_per_page ||
         !Bitmap::is_set(page_handle.bitmap, rid.slot_no)) {
@@ -136,6 +173,12 @@ void RmFileHandle::update_record(const Rid& rid, char* buf, Context* context) {
         throw RecordNotFoundError(rid.page_no, rid.slot_no);
     }
     memcpy(page_handle.get_slot(rid.slot_no), buf, file_hdr_.record_size);
+    if (page_lsn == INVALID_LSN && context != nullptr && context->txn_ != nullptr) {
+        page_lsn = context->txn_->get_prev_lsn();
+    }
+    if (page_lsn != INVALID_LSN) {
+        page_handle.page->set_page_lsn(page_lsn);
+    }
     buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), true);
 }
 

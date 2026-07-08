@@ -72,6 +72,7 @@ public:
     void set_concurrency_mode(ConcurrencyMode concurrency_mode) { concurrency_mode_ = concurrency_mode; }
 
     LockManager* get_lock_manager() { return lock_manager_; }
+    std::vector<CheckpointTxnInfo> snapshot_active_txns(txn_id_t exclude_txn_id = INVALID_TXN_ID);
 
     void append_insert_version(const std::string &tab_name, const Rid &rid, const RmRecord &record, Transaction *txn);
     void append_update_version(const std::string &tab_name, const Rid &rid, const RmRecord &old_record,
@@ -111,6 +112,7 @@ public:
     }
 
     static std::unordered_map<txn_id_t, Transaction *> txn_map;     // 全局事务表，存放事务ID与事务对象的映射关系
+    std::unordered_set<txn_id_t> active_txn_ids_;
     std::shared_mutex txn_map_mutex_;
     /** ------------------------以下函数仅可能在MVCC当中使用------------------------------------------*/
 
@@ -195,6 +197,14 @@ private:
     Version *visible_version(const std::string &tab_name, const Rid &rid, Transaction *txn);
     bool version_visible(const Version &version, Transaction *txn) const;
     bool record_matches(const std::string &tab_name, const std::vector<Condition> &conds, const RmRecord &record);
+    std::vector<std::string> build_conflict_keys(const std::string &tab_name, const RmRecord &record) const;
+    void remember_version_write(txn_id_t txn_id, const std::string &version_key, const std::string &tab_name,
+                                const RmRecord &record);
+    timestamp_t oldest_active_start_ts(txn_id_t exclude_txn_id = INVALID_TXN_ID);
+    bool conflict_entry_relevant(const std::string &conflict_key, const std::string &version_key,
+                                 timestamp_t oldest_start_ts);
+    void prune_conflict_indexes(timestamp_t oldest_start_ts);
+    void remove_table_conflict_indexes(const std::string &tab_name);
     bool add_rw_edge(txn_id_t reader, txn_id_t writer);
     bool creates_rw_cycle(txn_id_t from, txn_id_t to);
     bool creates_dangerous_structure(txn_id_t reader, txn_id_t writer);
@@ -211,6 +221,8 @@ private:
     std::mutex mvcc_latch_;
     std::mutex write_latch_;
     std::unordered_map<std::string, std::vector<Version>> versions_;
+    std::unordered_map<txn_id_t, std::vector<std::string>> txn_version_keys_;
+    std::unordered_map<std::string, std::vector<std::string>> conflict_key_versions_;
     std::unordered_map<txn_id_t, TxnSerState> ser_states_;
     std::unordered_map<txn_id_t, std::unordered_set<txn_id_t>> rw_edges_;
 

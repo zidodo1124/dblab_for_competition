@@ -375,6 +375,7 @@ int main(int argc, char **argv) {
             // Database not found, create a new one
             sm_manager->create_db(db_name);
         }
+        buffer_pool_manager->set_log_manager(log_manager.get());
         // Open database
         sm_manager->open_db(db_name);
 

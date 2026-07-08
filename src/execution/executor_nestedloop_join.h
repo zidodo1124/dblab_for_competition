@@ -35,6 +35,12 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
         return rec;
     }
 
+    void reset_inner_for_current_outer() {
+        auto left_rec = left_->Next();
+        right_->bind_outer_tuple(fed_conds_, left_->cols(), left_rec.get());
+        right_->beginTuple();
+    }
+
     void advance_to_match() {
         while (!left_->is_end()) {
             while (!right_->is_end()) {
@@ -48,9 +54,7 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
             }
             left_->nextTuple();
             if (!left_->is_end()) {
-                auto left_rec = left_->Next();
-                right_->set_join_key(fed_conds_, left_->cols(), left_rec.get());
-                right_->beginTuple();
+                reset_inner_for_current_outer();
             }
         }
         isend = true;
@@ -82,9 +86,7 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
             isend = true;
             return;
         }
-        auto left_rec = left_->Next();
-        right_->set_join_key(fed_conds_, left_->cols(), left_rec.get());
-        right_->beginTuple();
+        reset_inner_for_current_outer();
         // Even when the inner side is empty after its own filters, keep
         // advancing the outer side so EXPLAIN row counts include each inner run.
         advance_to_match();

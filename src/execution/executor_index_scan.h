@@ -33,7 +33,7 @@ class IndexScanExecutor : public AbstractExecutor {
     std::vector<ColMeta> cols_;
     size_t len_;
     std::vector<Condition> fed_conds_;
-    std::vector<Condition> runtime_conds_;
+    std::vector<Condition> outer_key_conds_;
 
     std::vector<std::string> index_col_names_;
     IndexMeta index_meta_;
@@ -44,6 +44,14 @@ class IndexScanExecutor : public AbstractExecutor {
     IxIndexHandle *ih_;
 
     SmManager *sm_manager_;
+
+    struct SearchWindow {
+        std::vector<char> low_key;
+        std::vector<char> high_key;
+        bool low_closed = true;
+        bool high_closed = true;
+        bool empty = false;
+    };
 
     void fill_min(char *buf, const ColMeta &col) {
         if (col.type == TYPE_INT) {
@@ -70,7 +78,7 @@ class IndexScanExecutor : public AbstractExecutor {
     }
 
     void copy_value(char *buf, const Condition &cond, const ColMeta &col) {
-        if (cond.rhs_val.raw != nullptr) {
+        if (cond.rhs_val.raw != nullptr && cond.rhs_val.raw->size == col.len) {
             memcpy(buf, cond.rhs_val.raw->data, col.len);
             return;
         }
@@ -88,16 +96,15 @@ class IndexScanExecutor : public AbstractExecutor {
         }
     }
 
-    std::vector<Condition> active_conds() const {
-        std::vector<Condition> conds = fed_conds_;
-        conds.insert(conds.end(), runtime_conds_.begin(), runtime_conds_.end());
-        return conds;
+    std::vector<Condition> scan_conds() const {
+        std::vector<Condition> all = fed_conds_;
+        all.insert(all.end(), outer_key_conds_.begin(), outer_key_conds_.end());
+        return all;
     }
 
-    std::vector<Condition> normalized_value_conds() {
-        auto conds = active_conds();
+    std::vector<Condition> normalized_value_conds() const {
         std::vector<Condition> normalized;
-        for (auto cond : conds) {
+        for (auto cond : fed_conds_) {
             if (!cond.is_rhs_val) {
                 continue;
             }
@@ -105,45 +112,43 @@ class IndexScanExecutor : public AbstractExecutor {
                 normalized.push_back(cond);
             }
         }
+        for (auto cond : outer_key_conds_) {
+            if (cond.is_rhs_val && cond.lhs_col.tab_name == logical_tab_name_) {
+                normalized.push_back(cond);
+            }
+        }
         return normalized;
     }
 
-    void build_index_range(Iid &lower, Iid &upper) {
+    SearchWindow make_search_window() {
         auto normalized = normalized_value_conds();
-        std::vector<char> low_key(index_meta_.col_tot_len);
-        std::vector<char> high_key(index_meta_.col_tot_len);
+        SearchWindow window;
+        window.low_key.resize(index_meta_.col_tot_len);
+        window.high_key.resize(index_meta_.col_tot_len);
         int offset = 0;
-        bool lower_inclusive = true;
-        bool upper_inclusive = true;
         bool stopped = false;
 
         for (int i = 0; i < index_meta_.col_num; ++i) {
             const auto &col = index_meta_.cols[i];
-            char *low = low_key.data() + offset;
-            char *high = high_key.data() + offset;
+            char *low = window.low_key.data() + offset;
+            char *high = window.high_key.data() + offset;
             fill_min(low, col);
             fill_max(high, col);
 
             if (!stopped) {
-                Condition *eq = nullptr;
-                Condition *gt = nullptr;
-                Condition *ge = nullptr;
-                Condition *lt = nullptr;
-                Condition *le = nullptr;
-                for (auto &cond : normalized) {
+                const Condition *eq = nullptr;
+                const Condition *lower = nullptr;
+                const Condition *upper = nullptr;
+                for (const auto &cond : normalized) {
                     if (cond.lhs_col.col_name != col.name) {
                         continue;
                     }
                     if (cond.op == OP_EQ) {
                         eq = &cond;
-                    } else if (cond.op == OP_GT) {
-                        gt = &cond;
-                    } else if (cond.op == OP_GE) {
-                        ge = &cond;
-                    } else if (cond.op == OP_LT) {
-                        lt = &cond;
-                    } else if (cond.op == OP_LE) {
-                        le = &cond;
+                    } else if (cond.op == OP_GT || cond.op == OP_GE) {
+                        lower = &cond;
+                    } else if (cond.op == OP_LT || cond.op == OP_LE) {
+                        upper = &cond;
                     }
                 }
 
@@ -151,15 +156,13 @@ class IndexScanExecutor : public AbstractExecutor {
                     copy_value(low, *eq, col);
                     copy_value(high, *eq, col);
                 } else {
-                    if (gt != nullptr || ge != nullptr) {
-                        Condition *bound = ge != nullptr ? ge : gt;
-                        copy_value(low, *bound, col);
-                        lower_inclusive = (bound->op == OP_GE);
+                    if (lower != nullptr) {
+                        copy_value(low, *lower, col);
+                        window.low_closed = (lower->op == OP_GE);
                     }
-                    if (lt != nullptr || le != nullptr) {
-                        Condition *bound = le != nullptr ? le : lt;
-                        copy_value(high, *bound, col);
-                        upper_inclusive = (bound->op == OP_LE);
+                    if (upper != nullptr) {
+                        copy_value(high, *upper, col);
+                        window.high_closed = (upper->op == OP_LE);
                     }
                     stopped = true;
                 }
@@ -173,22 +176,28 @@ class IndexScanExecutor : public AbstractExecutor {
             col_types.push_back(col.type);
             col_lens.push_back(col.len);
         }
-        int range_cmp = ix_compare(low_key.data(), high_key.data(), col_types, col_lens);
-        if (range_cmp > 0 || (range_cmp == 0 && (!lower_inclusive || !upper_inclusive))) {
+        int range_cmp = ix_compare(window.low_key.data(), window.high_key.data(), col_types, col_lens);
+        window.empty = range_cmp > 0 || (range_cmp == 0 && (!window.low_closed || !window.high_closed));
+        return window;
+    }
+
+    void build_index_range(Iid &lower, Iid &upper) {
+        auto window = make_search_window();
+        if (window.empty) {
             lower = ih_->leaf_end();
             upper = lower;
             return;
         }
 
-        lower = lower_inclusive ? ih_->lower_bound(low_key.data()) : ih_->upper_bound(low_key.data());
-        upper = upper_inclusive ? ih_->upper_bound(high_key.data()) : ih_->lower_bound(high_key.data());
+        lower = window.low_closed ? ih_->lower_bound(window.low_key.data()) : ih_->upper_bound(window.low_key.data());
+        upper = window.high_closed ? ih_->upper_bound(window.high_key.data()) : ih_->lower_bound(window.high_key.data());
     }
 
     void advance_to_valid() {
         while (cursor_ < visible_records_.size()) {
             rid_ = visible_records_[cursor_].first;
             rows_++;
-            auto conds = active_conds();
+            auto conds = scan_conds();
             if (eval_conds(cols_, conds, &visible_records_[cursor_].second)) {
                 return;
             }
@@ -196,41 +205,22 @@ class IndexScanExecutor : public AbstractExecutor {
         }
     }
 
-    bool make_runtime_condition(const Condition &join_cond, const std::vector<ColMeta> &outer_cols,
-                                const RmRecord *outer_rec, Condition &runtime_cond) {
-        if (join_cond.is_rhs_val || join_cond.op != OP_EQ) {
-            return false;
-        }
-
-        TabCol inner_col;
-        TabCol outer_col;
-        if (join_cond.lhs_col.tab_name == logical_tab_name_) {
-            inner_col = join_cond.lhs_col;
-            outer_col = join_cond.rhs_col;
-        } else if (join_cond.rhs_col.tab_name == logical_tab_name_) {
-            inner_col = join_cond.rhs_col;
-            outer_col = join_cond.lhs_col;
+    Condition make_value_cond(const TabCol &inner_col, const ColMeta &outer_meta, const RmRecord *outer_rec) {
+        Condition cond;
+        cond.lhs_col = inner_col;
+        cond.op = OP_EQ;
+        cond.is_rhs_val = true;
+        if (outer_meta.type == TYPE_INT) {
+            cond.rhs_val.set_int(*(int *)(outer_rec->data + outer_meta.offset));
+        } else if (outer_meta.type == TYPE_FLOAT) {
+            cond.rhs_val.set_float(*(float *)(outer_rec->data + outer_meta.offset));
         } else {
-            return false;
-        }
-
-        const auto outer_meta = get_col(outer_cols, outer_col);
-        runtime_cond.lhs_col = inner_col;
-        runtime_cond.op = OP_EQ;
-        runtime_cond.is_rhs_val = true;
-        runtime_cond.rhs_col = {};
-        runtime_cond.rhs_val.raw = nullptr;
-        if (outer_meta->type == TYPE_INT) {
-            runtime_cond.rhs_val.set_int(*(int *)(outer_rec->data + outer_meta->offset));
-        } else if (outer_meta->type == TYPE_FLOAT) {
-            runtime_cond.rhs_val.set_float(*(float *)(outer_rec->data + outer_meta->offset));
-        } else {
-            std::string value(outer_rec->data + outer_meta->offset, outer_meta->len);
+            std::string value(outer_rec->data + outer_meta.offset, outer_meta.len);
             value.resize(strlen(value.c_str()));
-            runtime_cond.rhs_val.set_str(value);
+            cond.rhs_val.set_str(value);
         }
-        runtime_cond.rhs_val.init_raw(outer_meta->len);
-        return true;
+        cond.rhs_val.init_raw(outer_meta.len);
+        return cond;
     }
 
    public:
@@ -264,9 +254,9 @@ class IndexScanExecutor : public AbstractExecutor {
         for (IxScan scan(ih_, lower, upper, sm_manager_->get_bpm()); !scan.is_end(); scan.next()) {
             Rid candidate = scan.rid();
             std::unique_ptr<RmRecord> rec =
-                context_->txn_mgr_ != nullptr
-                    ? context_->txn_mgr_->get_visible_record(tab_name_, candidate, fh_, context_)
-                    : fh_->get_record(candidate, context_);
+                context_->txn_mgr_ == nullptr
+                    ? fh_->get_record(candidate, context_)
+                    : context_->txn_mgr_->get_visible_record(tab_name_, candidate, fh_, context_);
             if (rec != nullptr) {
                 visible_records_.emplace_back(candidate, *rec);
             }
@@ -307,18 +297,27 @@ class IndexScanExecutor : public AbstractExecutor {
 
     std::vector<std::string> tables() const override { return {logical_tab_name_}; }
 
-    bool set_join_key(const std::vector<Condition> &join_conds, const std::vector<ColMeta> &outer_cols,
-                      const RmRecord *outer_rec) override {
-        runtime_conds_.clear();
-        bool matched = false;
-        for (const auto &cond : join_conds) {
-            Condition runtime_cond;
-            if (make_runtime_condition(cond, outer_cols, outer_rec, runtime_cond)) {
-                runtime_conds_.push_back(std::move(runtime_cond));
-                matched = true;
+    void bind_outer_tuple(const std::vector<Condition> &join_conds, const std::vector<ColMeta> &outer_cols,
+                          const RmRecord *outer_rec) override {
+        outer_key_conds_.clear();
+        for (const auto &join_cond : join_conds) {
+            if (join_cond.is_rhs_val || join_cond.op != OP_EQ) {
+                continue;
             }
+            TabCol inner_col;
+            TabCol outer_col;
+            if (join_cond.lhs_col.tab_name == logical_tab_name_) {
+                inner_col = join_cond.lhs_col;
+                outer_col = join_cond.rhs_col;
+            } else if (join_cond.rhs_col.tab_name == logical_tab_name_) {
+                inner_col = join_cond.rhs_col;
+                outer_col = join_cond.lhs_col;
+            } else {
+                continue;
+            }
+            auto outer_meta = get_col(outer_cols, outer_col);
+            outer_key_conds_.push_back(make_value_cond(inner_col, *outer_meta, outer_rec));
         }
-        return matched;
     }
 
     std::string explain(int depth = 0) const override {

@@ -84,9 +84,9 @@ class ProjectionExecutor : public AbstractExecutor {
 
     std::vector<std::string> tables() const override { return prev_->tables(); }
 
-    bool set_join_key(const std::vector<Condition> &join_conds, const std::vector<ColMeta> &outer_cols,
-                      const RmRecord *outer_rec) override {
-        return prev_->set_join_key(join_conds, outer_cols, outer_rec);
+    void bind_outer_tuple(const std::vector<Condition> &join_conds, const std::vector<ColMeta> &outer_cols,
+                          const RmRecord *outer_rec) override {
+        prev_->bind_outer_tuple(join_conds, outer_cols, outer_rec);
     }
 
     std::string explain(int depth = 0) const override {

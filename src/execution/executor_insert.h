@@ -100,10 +100,10 @@ class InsertExecutor : public AbstractExecutor {
             ih->insert_entry(keys[i].data(), rid_, context_->txn_);
         }
         if (context_->txn_ != nullptr) {
+            context_->txn_->append_write_record(new WriteRecord(WType::INSERT_TUPLE, tab_name_, rid_));
             if (context_->txn_mgr_ != nullptr) {
                 context_->txn_mgr_->append_insert_version(tab_name_, rid_, rec, context_->txn_);
             }
-            context_->txn_->append_write_record(new WriteRecord(WType::INSERT_TUPLE, tab_name_, rid_));
         }
         return nullptr;
     }

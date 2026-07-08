@@ -182,55 +182,61 @@ std::shared_ptr<Plan> pop_scan(int *scantbl, std::string table, std::vector<std:
     return nullptr;
 }
 
-bool choose_join_index_cols(const std::string &real_table, const std::string &logical_table,
-                            const std::vector<Condition> &join_conds,
-                            std::vector<std::string> &index_col_names, SmManager *sm_manager) {
-    index_col_names.clear();
-    const auto &tab = sm_manager->db_.get_table(real_table);
-    std::set<std::string> join_cols;
+bool best_join_probe_index(SmManager *sm_manager, const std::string &real_table, const std::string &logical_table,
+                           const std::vector<Condition> &join_conds, std::vector<std::string> &index_cols) {
+    index_cols.clear();
+    std::set<std::string> equi_join_cols;
     for (const auto &cond : join_conds) {
         if (cond.is_rhs_val || cond.op != OP_EQ) {
             continue;
         }
         if (cond.lhs_col.tab_name == logical_table) {
-            join_cols.insert(cond.lhs_col.col_name);
+            equi_join_cols.insert(cond.lhs_col.col_name);
         }
         if (cond.rhs_col.tab_name == logical_table) {
-            join_cols.insert(cond.rhs_col.col_name);
+            equi_join_cols.insert(cond.rhs_col.col_name);
         }
     }
-    if (join_cols.empty()) {
+    if (equi_join_cols.empty()) {
         return false;
     }
+
+    const auto &tab = sm_manager->db_.get_table(real_table);
+    const IndexMeta *best = nullptr;
     for (const auto &index : tab.indexes) {
-        if (!index.cols.empty() && join_cols.find(index.cols.front().name) != join_cols.end()) {
-            for (const auto &col : index.cols) {
-                index_col_names.push_back(col.name);
-            }
-            return true;
+        if (index.cols.empty() || equi_join_cols.count(index.cols.front().name) == 0) {
+            continue;
+        }
+        if (best == nullptr || index.col_num < best->col_num) {
+            best = &index;
         }
     }
-    return false;
+    if (best == nullptr) {
+        return false;
+    }
+    for (const auto &col : best->cols) {
+        index_cols.push_back(col.name);
+    }
+    return true;
 }
 
-bool mark_join_index_scan(const std::shared_ptr<Plan> &plan, const std::vector<Condition> &join_conds,
-                          SmManager *sm_manager) {
+void promote_inner_index_scan(const std::shared_ptr<Plan> &plan, const std::vector<Condition> &join_conds,
+                              SmManager *sm_manager) {
     if (auto scan = std::dynamic_pointer_cast<ScanPlan>(plan)) {
         std::vector<std::string> index_cols;
-        if (!choose_join_index_cols(scan->tab_name_, scan->logical_tab_name_, join_conds, index_cols, sm_manager)) {
-            return false;
+        if (best_join_probe_index(sm_manager, scan->tab_name_, scan->logical_tab_name_, join_conds, index_cols)) {
+            scan->tag = T_IndexScan;
+            scan->index_col_names_ = std::move(index_cols);
         }
-        scan->tag = T_IndexScan;
-        scan->index_col_names_ = std::move(index_cols);
-        return true;
+        return;
     }
     if (auto filter = std::dynamic_pointer_cast<FilterPlan>(plan)) {
-        return mark_join_index_scan(filter->subplan_, join_conds, sm_manager);
+        promote_inner_index_scan(filter->subplan_, join_conds, sm_manager);
+        return;
     }
     if (auto projection = std::dynamic_pointer_cast<ProjectionPlan>(plan)) {
-        return mark_join_index_scan(projection->subplan_, join_conds, sm_manager);
+        promote_inner_index_scan(projection->subplan_, join_conds, sm_manager);
     }
-    return false;
 }
 
 
@@ -318,7 +324,7 @@ std::shared_ptr<Plan> Planner::make_one_rel(std::shared_ptr<Query> query)
                 used_cond[cond_idx] = true;
             }
         }
-        mark_join_index_scan(table_scan_executors[i], curr_join_conds, sm_manager_);
+        promote_inner_index_scan(table_scan_executors[i], curr_join_conds, sm_manager_);
         table_join_executors = std::make_shared<JoinPlan>(T_NestLoop, std::move(table_join_executors),
                                                           table_scan_executors[i], curr_join_conds);
         joined = std::move(new_joined);
@@ -680,7 +686,7 @@ std::shared_ptr<Plan> build_join_plan_for_order(
                 used_join_cond[cond_idx] = true;
             }
         }
-        mark_join_index_scan(table_plans.at(right_table), curr_join_conds, sm_manager);
+        promote_inner_index_scan(table_plans.at(right_table), curr_join_conds, sm_manager);
         root = std::make_shared<JoinPlan>(T_NestLoop, std::move(root), table_plans.at(right_table),
                                           curr_join_conds, display_names);
         joined = std::move(new_joined);

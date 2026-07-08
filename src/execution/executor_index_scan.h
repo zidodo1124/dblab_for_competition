@@ -223,6 +223,14 @@ class IndexScanExecutor : public AbstractExecutor {
         return cond;
     }
 
+    bool needs_snapshot_safe_scan() const {
+        if (context_->txn_mgr_ == nullptr || context_->txn_ == nullptr || !context_->txn_->get_txn_mode()) {
+            return false;
+        }
+        auto isolation = context_->txn_->get_isolation_level();
+        return isolation == IsolationLevel::SNAPSHOT_ISOLATION || isolation == IsolationLevel::SERIALIZABLE;
+    }
+
    public:
     IndexScanExecutor(SmManager *sm_manager, std::string tab_name, std::vector<Condition> conds,
                       std::vector<std::string> index_col_names, Context *context,
@@ -248,17 +256,21 @@ class IndexScanExecutor : public AbstractExecutor {
     void beginTuple() override {
         visible_records_.clear();
         cursor_ = 0;
-        Iid lower;
-        Iid upper;
-        build_index_range(lower, upper);
-        for (IxScan scan(ih_, lower, upper, sm_manager_->get_bpm()); !scan.is_end(); scan.next()) {
-            Rid candidate = scan.rid();
-            std::unique_ptr<RmRecord> rec =
-                context_->txn_mgr_ == nullptr
-                    ? fh_->get_record(candidate, context_)
-                    : context_->txn_mgr_->get_visible_record(tab_name_, candidate, fh_, context_);
-            if (rec != nullptr) {
-                visible_records_.emplace_back(candidate, *rec);
+        if (needs_snapshot_safe_scan()) {
+            visible_records_ = context_->txn_mgr_->get_visible_records(tab_name_, fh_, context_);
+        } else {
+            Iid lower;
+            Iid upper;
+            build_index_range(lower, upper);
+            for (IxScan scan(ih_, lower, upper, sm_manager_->get_bpm()); !scan.is_end(); scan.next()) {
+                Rid candidate = scan.rid();
+                std::unique_ptr<RmRecord> rec =
+                    context_->txn_mgr_ == nullptr
+                        ? fh_->get_record(candidate, context_)
+                        : context_->txn_mgr_->get_visible_record(tab_name_, candidate, fh_, context_);
+                if (rec != nullptr) {
+                    visible_records_.emplace_back(candidate, *rec);
+                }
             }
         }
         if (context_->is_select_ && context_->txn_mgr_ != nullptr) {

@@ -1,8 +1,11 @@
 %{
 #include "ast.h"
 #include "yacc.tab.h"
+#include <algorithm>
+#include <cctype>
 #include <iostream>
 #include <memory>
+#include <string>
 
 int yylex(YYSTYPE *yylval, YYLTYPE *yylloc);
 
@@ -11,6 +14,38 @@ void yyerror(YYLTYPE *locp, const char* s) {
 }
 
 using namespace ast;
+
+static std::string lower_copy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+static bool parse_compatible_isolation_identifier(const std::string &level, bool *serializable) {
+    std::string normalized = lower_copy(level);
+    if (normalized == "read_committed" || normalized == "read_uncommitted" ||
+        normalized == "repeatable_read") {
+        *serializable = false;
+        return true;
+    }
+    return false;
+}
+
+static bool parse_compatible_isolation_pair(
+    const std::string &first, const std::string &second, bool *serializable) {
+    std::string left = lower_copy(first);
+    std::string right = lower_copy(second);
+    if (left == "read" && (right == "committed" || right == "uncommitted")) {
+        *serializable = false;
+        return true;
+    }
+    if (left == "repeatable" && right == "read") {
+        *serializable = false;
+        return true;
+    }
+    return false;
+}
 %}
 
 // request a pure (reentrant) parser
@@ -164,6 +199,24 @@ isolationLevel:
     |   SERIALIZABLE
     {
         $$ = true;
+    }
+    |   IDENTIFIER
+    {
+        bool serializable = false;
+        if (!parse_compatible_isolation_identifier($1, &serializable)) {
+            yyerror(&@$, "unsupported isolation level");
+            YYERROR;
+        }
+        $$ = serializable;
+    }
+    |   IDENTIFIER IDENTIFIER
+    {
+        bool serializable = false;
+        if (!parse_compatible_isolation_pair($1, $2, &serializable)) {
+            yyerror(&@$, "unsupported isolation level");
+            YYERROR;
+        }
+        $$ = serializable;
     }
     ;
 

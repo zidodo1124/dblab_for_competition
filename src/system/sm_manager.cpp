@@ -142,8 +142,10 @@ void SmManager::close_db() {
  */
 void SmManager::show_tables(Context* context) {
     std::fstream outfile;
-    outfile.open("output.txt", std::ios::out | std::ios::app);
-    outfile << "| Tables |\n";
+    if (output_file_enabled()) {
+        outfile.open("output.txt", std::ios::out | std::ios::app);
+        outfile << "| Tables |\n";
+    }
     RecordPrinter printer(1);
     printer.print_separator(context);
     printer.print_record({"Tables"}, context);
@@ -151,10 +153,14 @@ void SmManager::show_tables(Context* context) {
     for (auto &entry : db_.tabs_) {
         auto &tab = entry.second;
         printer.print_record({tab.name}, context);
-        outfile << "| " << tab.name << " |\n";
+        if (output_file_enabled()) {
+            outfile << "| " << tab.name << " |\n";
+        }
     }
     printer.print_separator(context);
-    outfile.close();
+    if (outfile.is_open()) {
+        outfile.close();
+    }
 }
 
 /**
@@ -166,7 +172,9 @@ void SmManager::show_index(const std::string& tab_name, Context* context) {
     TabMeta &tab = db_.get_table(tab_name);
 
     std::fstream outfile;
-    outfile.open("output.txt", std::ios::out | std::ios::app);
+    if (output_file_enabled()) {
+        outfile.open("output.txt", std::ios::out | std::ios::app);
+    }
     for (auto &index : tab.indexes) {
         std::string cols = "(";
         for (int i = 0; i < index.col_num; ++i) {
@@ -178,7 +186,9 @@ void SmManager::show_index(const std::string& tab_name, Context* context) {
         cols += ")";
 
         std::string line = "| " + tab_name + " | unique | " + cols + " |\n";
-        outfile << line;
+        if (output_file_enabled()) {
+            outfile << line;
+        }
         if (context->ellipsis_ == false && *context->offset_ + line.length() < BUFFER_LENGTH) {
             memcpy(context->data_send_ + *(context->offset_), line.c_str(), line.length());
             *(context->offset_) += static_cast<int>(line.length());
@@ -186,7 +196,9 @@ void SmManager::show_index(const std::string& tab_name, Context* context) {
             context->ellipsis_ = true;
         }
     }
-    outfile.close();
+    if (outfile.is_open()) {
+        outfile.close();
+    }
 }
 
 /**

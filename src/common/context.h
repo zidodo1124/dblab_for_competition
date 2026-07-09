@@ -10,6 +10,8 @@ See the Mulan PSL v2 for more details. */
 
 #pragma once
 
+#include <atomic>
+
 #include "transaction/transaction.h"
 #include "transaction/concurrency/lock_manager.h"
 #include "recovery/log_manager.h"
@@ -18,6 +20,16 @@ class TransactionManager;
 
 // used for data_send
 static int const_offset = -1;
+
+inline std::atomic<bool> g_output_file_enabled{true};
+
+inline bool output_file_enabled() {
+    return g_output_file_enabled.load(std::memory_order_relaxed);
+}
+
+inline void set_output_file_enabled(bool enabled) {
+    g_output_file_enabled.store(enabled, std::memory_order_relaxed);
+}
 
 class Context {
 public:

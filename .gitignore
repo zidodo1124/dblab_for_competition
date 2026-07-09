@@ -1,9 +1,16 @@
+# Build output.
 build/
+
+# Local-only debug/test databases and generated artifacts.
+# These are for broad local checks only; do not push them to remote branches.
 *_db/
-z_tasks_todo/
-z_task_done/
-z_loctest/
-z_teach/
-z_learn/
 gate10_local_basic/
 gate10_local_*_auto/
+
+# Local task notes, learning notes, and regression/stress test suites.
+# Keep all ad-hoc test scripts, server logs, and generated test DBs under z_loctest/.
+z_loctest/
+z_tasks_todo/
+z_task_done/
+z_teach/
+z_learn/

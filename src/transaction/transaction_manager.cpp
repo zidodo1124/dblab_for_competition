@@ -644,6 +644,23 @@ std::vector<txn_id_t> TransactionManager::active_txn_ids(txn_id_t exclude_txn_id
     return active;
 }
 
+std::vector<CheckpointTxnInfo> TransactionManager::active_txn_infos(txn_id_t exclude_txn_id) {
+    std::unique_lock<std::mutex> lock(latch_);
+    std::vector<CheckpointTxnInfo> active;
+    active.reserve(txn_map.size());
+    for (const auto &entry : txn_map) {
+        if (entry.first == exclude_txn_id) {
+            continue;
+        }
+        Transaction *txn = entry.second;
+        if (txn != nullptr && txn->get_state() != TransactionState::COMMITTED &&
+            txn->get_state() != TransactionState::ABORTED) {
+            active.push_back(CheckpointTxnInfo{entry.first, txn->get_first_lsn()});
+        }
+    }
+    return active;
+}
+
 void TransactionManager::clear_table_versions(const std::string &tab_name) {
     std::lock_guard<std::mutex> lock(mvcc_latch_);
     const std::string prefix = tab_name + "#";

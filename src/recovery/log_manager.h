@@ -22,6 +22,11 @@ class SmManager;
 class TransactionManager;
 class Transaction;
 
+struct CheckpointTxnInfo {
+    txn_id_t txn_id{INVALID_TXN_ID};
+    lsn_t first_lsn{INVALID_LSN};
+};
+
 /* 日志记录对应操作的类型 */
 enum LogType: int {
     UPDATE = 0,
@@ -324,38 +329,53 @@ public:
         log_tid_ = INVALID_TXN_ID;
         prev_lsn_ = INVALID_LSN;
     }
-    explicit CheckpointLogRecord(std::vector<txn_id_t> active_txn_ids) : CheckpointLogRecord() {
-        active_txn_ids_ = std::move(active_txn_ids);
-        log_tot_len_ += sizeof(uint32_t) + active_txn_ids_.size() * sizeof(txn_id_t);
+    explicit CheckpointLogRecord(std::vector<CheckpointTxnInfo> active_txns) : CheckpointLogRecord() {
+        active_txns_ = std::move(active_txns);
+        log_tot_len_ += sizeof(uint32_t) + active_txns_.size() * (sizeof(txn_id_t) + sizeof(lsn_t));
     }
 
     void serialize(char* dest) const override {
         LogRecord::serialize(dest);
         int offset = OFFSET_LOG_DATA;
-        uint32_t active_count = static_cast<uint32_t>(active_txn_ids_.size());
+        uint32_t active_count = static_cast<uint32_t>(active_txns_.size());
         memcpy(dest + offset, &active_count, sizeof(uint32_t));
         offset += sizeof(uint32_t);
-        if (active_count > 0) {
-            memcpy(dest + offset, active_txn_ids_.data(), active_count * sizeof(txn_id_t));
+        for (const auto &txn_info : active_txns_) {
+            memcpy(dest + offset, &txn_info.txn_id, sizeof(txn_id_t));
+            offset += sizeof(txn_id_t);
+            memcpy(dest + offset, &txn_info.first_lsn, sizeof(lsn_t));
+            offset += sizeof(lsn_t);
         }
     }
 
     void deserialize(const char* src) override {
         LogRecord::deserialize(src);
-        active_txn_ids_.clear();
+        active_txns_.clear();
         if (log_tot_len_ <= LOG_HEADER_SIZE) {
             return;
         }
         int offset = OFFSET_LOG_DATA;
         uint32_t active_count = *reinterpret_cast<const uint32_t*>(src + offset);
         offset += sizeof(uint32_t);
-        active_txn_ids_.resize(active_count);
-        if (active_count > 0) {
-            memcpy(active_txn_ids_.data(), src + offset, active_count * sizeof(txn_id_t));
+        int payload_len = static_cast<int>(log_tot_len_) - offset;
+        active_txns_.resize(active_count);
+        if (payload_len >= static_cast<int>(active_count * (sizeof(txn_id_t) + sizeof(lsn_t)))) {
+            for (auto &txn_info : active_txns_) {
+                memcpy(&txn_info.txn_id, src + offset, sizeof(txn_id_t));
+                offset += sizeof(txn_id_t);
+                memcpy(&txn_info.first_lsn, src + offset, sizeof(lsn_t));
+                offset += sizeof(lsn_t);
+            }
+        } else {
+            for (auto &txn_info : active_txns_) {
+                memcpy(&txn_info.txn_id, src + offset, sizeof(txn_id_t));
+                offset += sizeof(txn_id_t);
+                txn_info.first_lsn = INVALID_LSN;
+            }
         }
     }
 
-    std::vector<txn_id_t> active_txn_ids_;
+    std::vector<CheckpointTxnInfo> active_txns_;
 };
 
 /* 日志缓冲区，只有一个buffer，因此需要阻塞地去把日志写入缓冲区中 */

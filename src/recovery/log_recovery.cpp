@@ -15,6 +15,7 @@ See the Mulan PSL v2 for more details. */
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "index/ix.h"
@@ -124,20 +125,40 @@ bool parse_update_log(const LogRecordView &view, UpdateLogView &update_log) {
            read_table_name(pos, end, update_log.table);
 }
 
-bool parse_checkpoint_log(const LogRecordView &view, std::unordered_set<txn_id_t> &active_txns) {
+bool parse_checkpoint_log(const LogRecordView &view, std::unordered_set<txn_id_t> &active_txns,
+                          std::unordered_map<txn_id_t, lsn_t> &active_first_lsns) {
     active_txns.clear();
+    active_first_lsns.clear();
     const char *pos = view.data + OFFSET_LOG_DATA;
     const char *end = view.data + view.len;
     uint32_t active_count = 0;
     if (!read_field(pos, end, active_count)) {
         return false;
     }
-    for (uint32_t i = 0; i < active_count; ++i) {
-        txn_id_t txn_id = INVALID_TXN_ID;
-        if (!read_field(pos, end, txn_id)) {
-            return false;
+    const int64_t remaining = end - pos;
+    const int64_t old_format_len = static_cast<int64_t>(active_count) * sizeof(txn_id_t);
+    const int64_t new_format_len = static_cast<int64_t>(active_count) * (sizeof(txn_id_t) + sizeof(lsn_t));
+    if (remaining >= new_format_len) {
+        for (uint32_t i = 0; i < active_count; ++i) {
+            txn_id_t txn_id = INVALID_TXN_ID;
+            lsn_t first_lsn = INVALID_LSN;
+            if (!read_field(pos, end, txn_id) || !read_field(pos, end, first_lsn)) {
+                return false;
+            }
+            active_txns.insert(txn_id);
+            active_first_lsns[txn_id] = first_lsn;
         }
-        active_txns.insert(txn_id);
+    } else if (remaining >= old_format_len) {
+        for (uint32_t i = 0; i < active_count; ++i) {
+            txn_id_t txn_id = INVALID_TXN_ID;
+            if (!read_field(pos, end, txn_id)) {
+                return false;
+            }
+            active_txns.insert(txn_id);
+            active_first_lsns[txn_id] = INVALID_LSN;
+        }
+    } else {
+        return false;
     }
     return true;
 }
@@ -213,6 +234,7 @@ void RecoveryManager::analyze() {
         return true;
     };
 
+    int fallback_offset = 0;
     auto parse_logs = [&](bool keep_logs_before_active_checkpoint) -> bool {
         log_record_offsets_.clear();
         committed_txns_.clear();
@@ -220,6 +242,8 @@ void RecoveryManager::analyze() {
         active_txns.reserve(log_data_.size() / LOG_HEADER_SIZE + 1);
         committed_txns_.reserve(active_txns.bucket_count());
         bool needs_full_scan = false;
+        fallback_offset = 0;
+        std::unordered_map<txn_id_t, lsn_t> checkpoint_active_first_lsns;
         int log_offset = 0;
         while (true) {
             LogRecordView view{};
@@ -230,10 +254,9 @@ void RecoveryManager::analyze() {
             switch (view.type) {
                 case LogType::CHECKPOINT: {
                     std::unordered_set<txn_id_t> checkpoint_active;
-                    if (parse_checkpoint_log(view, checkpoint_active)) {
-                        if (!checkpoint_active.empty() && offset > 0 && !keep_logs_before_active_checkpoint) {
-                            needs_full_scan = true;
-                        }
+                    std::unordered_map<txn_id_t, lsn_t> checkpoint_first_lsns;
+                    if (parse_checkpoint_log(view, checkpoint_active, checkpoint_first_lsns)) {
+                        checkpoint_active_first_lsns = std::move(checkpoint_first_lsns);
                         active_txns = std::move(checkpoint_active);
                         if (active_txns.empty() || !keep_logs_before_active_checkpoint) {
                             committed_txns_.clear();
@@ -253,7 +276,10 @@ void RecoveryManager::analyze() {
                     break;
                 case LogType::ABORT:
                     log_record_offsets_.push_back(log_offset);
-                    active_txns.erase(view.tid);
+                    // Runtime rollback does not emit compensation log records, so a crash can lose the
+                    // physical undo while keeping the ABORT log. Keep the transaction in the undo set;
+                    // repeating undo during recovery is idempotent for record and index changes.
+                    active_txns.insert(view.tid);
                     break;
                 case LogType::INSERT:
                 case LogType::DELETE:
@@ -266,6 +292,26 @@ void RecoveryManager::analyze() {
             log_offset += static_cast<int>(view.len);
         }
         loser_txns_ = std::move(active_txns);
+        if (!keep_logs_before_active_checkpoint && offset > 0 && !checkpoint_active_first_lsns.empty()) {
+            bool has_precise_fallback = false;
+            for (txn_id_t loser_txn : loser_txns_) {
+                auto it = checkpoint_active_first_lsns.find(loser_txn);
+                if (it == checkpoint_active_first_lsns.end()) {
+                    continue;
+                }
+                needs_full_scan = true;
+                lsn_t first_lsn = it->second;
+                if (first_lsn == INVALID_LSN || first_lsn < 0 || first_lsn >= offset) {
+                    fallback_offset = 0;
+                    has_precise_fallback = false;
+                    break;
+                }
+                if (!has_precise_fallback || first_lsn < fallback_offset) {
+                    fallback_offset = static_cast<int>(first_lsn);
+                    has_precise_fallback = true;
+                }
+            }
+        }
         return needs_full_scan;
     };
 
@@ -273,7 +319,7 @@ void RecoveryManager::analyze() {
         return;
     }
     if (parse_logs(false) && offset > 0) {
-        offset = 0;
+        offset = fallback_offset;
         if (load_logs(offset)) {
             parse_logs(true);
         }

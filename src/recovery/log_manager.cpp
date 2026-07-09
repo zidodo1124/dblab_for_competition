@@ -101,10 +101,11 @@ void LogManager::create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_
     auto write_guard = txn_mgr != nullptr ? txn_mgr->acquire_write_latch() : std::unique_lock<std::mutex>();
     flush_log_to_disk();
     int checkpoint_offset = disk_manager_->get_file_size(LOG_FILE_NAME);
-    txn_id_t exclude_txn_id = current_txn == nullptr ? INVALID_TXN_ID : current_txn->get_transaction_id();
-    std::vector<txn_id_t> active_txn_ids =
-        txn_mgr != nullptr ? txn_mgr->active_txn_ids(exclude_txn_id) : std::vector<txn_id_t>();
-    CheckpointLogRecord checkpoint(std::move(active_txn_ids));
+    bool current_is_implicit = current_txn != nullptr && !current_txn->get_txn_mode();
+    txn_id_t exclude_txn_id = current_is_implicit ? current_txn->get_transaction_id() : INVALID_TXN_ID;
+    std::vector<CheckpointTxnInfo> active_txns =
+        txn_mgr != nullptr ? txn_mgr->active_txn_infos(exclude_txn_id) : std::vector<CheckpointTxnInfo>();
+    CheckpointLogRecord checkpoint(std::move(active_txns));
     add_log_record(&checkpoint);
     flush_log_to_disk();
     sm_manager->flush_meta();

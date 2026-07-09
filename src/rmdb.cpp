@@ -246,6 +246,12 @@ void execute_parse_tree(std::shared_ptr<ast::TreeNode> parse_tree, char *data_se
     } catch (RMDBError &e) {
         std::cerr << e.what() << std::endl;
 
+        if (context->txn_ != nullptr &&
+            context->txn_->get_state() != TransactionState::COMMITTED &&
+            context->txn_->get_state() != TransactionState::ABORTED) {
+            txn_manager->abort(context->txn_, log_manager.get());
+        }
+
         memcpy(data_send, e.what(), e.get_msg_len());
         data_send[e.get_msg_len()] = '\n';
         data_send[e.get_msg_len() + 1] = '\0';

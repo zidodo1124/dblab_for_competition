@@ -83,14 +83,19 @@ class InsertExecutor : public AbstractExecutor {
             context_->txn_mgr_->check_ser_write(tab_name_, new_record_placeholder, nullptr, &rec, context_->txn_);
         }
 
+        // Reserve the rid first so MVCC metadata is visible before the physical tuple becomes visible.
+        rid_ = fh_->get_next_insert_rid();
+        if (context_->txn_ != nullptr && context_->txn_mgr_ != nullptr) {
+            context_->txn_mgr_->append_insert_version(tab_name_, rid_, rec, context_->txn_);
+        }
+
         // Insert into record file
         if (context_->log_mgr_ != nullptr && context_->txn_ != nullptr) {
-            rid_ = fh_->get_next_insert_rid();
             InsertLogRecord log_record(context_->txn_->get_transaction_id(), rec, rid_, tab_name_);
             lsn_t lsn = context_->log_mgr_->add_log_record(&log_record, context_->txn_);
             fh_->insert_record(rid_, rec.data, lsn);
         } else {
-            rid_ = fh_->insert_record(rec.data, context_);
+            fh_->insert_record(rid_, rec.data);
         }
 
         // Insert into index
@@ -101,9 +106,6 @@ class InsertExecutor : public AbstractExecutor {
         }
         if (context_->txn_ != nullptr) {
             context_->txn_->append_write_record(new WriteRecord(WType::INSERT_TUPLE, tab_name_, rid_));
-            if (context_->txn_mgr_ != nullptr) {
-                context_->txn_mgr_->append_insert_version(tab_name_, rid_, rec, context_->txn_);
-            }
         }
         return nullptr;
     }

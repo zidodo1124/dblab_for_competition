@@ -35,8 +35,8 @@
    especially those whose name start with YY_ or yy_.  They are
    private implementation details that can be changed or removed.  */
 
-#ifndef YY_YY_MNT_D_STUDY_SUBMIT_RMDB_SRC_PARSER_YACC_TAB_H_INCLUDED
-# define YY_YY_MNT_D_STUDY_SUBMIT_RMDB_SRC_PARSER_YACC_TAB_H_INCLUDED
+#ifndef YY_YY_HOME_LX_RMDB_SRC_PARSER_YACC_TAB_H_INCLUDED
+# define YY_YY_HOME_LX_RMDB_SRC_PARSER_YACC_TAB_H_INCLUDED
 /* Debug traces.  */
 #ifndef YYDEBUG
 # define YYDEBUG 0
@@ -92,26 +92,29 @@ extern int yydebug;
     ISOLATION = 293,               /* ISOLATION  */
     LEVEL = 294,                   /* LEVEL  */
     SNAPSHOT = 295,                /* SNAPSHOT  */
-    SERIALIZABLE = 296,            /* SERIALIZABLE  */
-    GROUP = 297,                   /* GROUP  */
-    HAVING = 298,                  /* HAVING  */
-    AS = 299,                      /* AS  */
-    COUNT = 300,                   /* COUNT  */
-    MAX = 301,                     /* MAX  */
-    MIN = 302,                     /* MIN  */
-    SUM = 303,                     /* SUM  */
-    AVG = 304,                     /* AVG  */
-    LIMIT = 305,                   /* LIMIT  */
-    UNION = 306,                   /* UNION  */
-    LEQ = 307,                     /* LEQ  */
-    NEQ = 308,                     /* NEQ  */
-    GEQ = 309,                     /* GEQ  */
-    T_EOF = 310,                   /* T_EOF  */
-    IDENTIFIER = 311,              /* IDENTIFIER  */
-    VALUE_STRING = 312,            /* VALUE_STRING  */
-    VALUE_INT = 313,               /* VALUE_INT  */
-    VALUE_FLOAT = 314,             /* VALUE_FLOAT  */
-    VALUE_BOOL = 315               /* VALUE_BOOL  */
+    SNAPSHOT_ISOLATION = 296,      /* SNAPSHOT_ISOLATION  */
+    SERIALIZABLE = 297,            /* SERIALIZABLE  */
+    SESSION = 298,                 /* SESSION  */
+    CHARACTERISTICS = 299,         /* CHARACTERISTICS  */
+    GROUP = 300,                   /* GROUP  */
+    HAVING = 301,                  /* HAVING  */
+    AS = 302,                      /* AS  */
+    COUNT = 303,                   /* COUNT  */
+    MAX = 304,                     /* MAX  */
+    MIN = 305,                     /* MIN  */
+    SUM = 306,                     /* SUM  */
+    AVG = 307,                     /* AVG  */
+    LIMIT = 308,                   /* LIMIT  */
+    UNION = 309,                   /* UNION  */
+    LEQ = 310,                     /* LEQ  */
+    NEQ = 311,                     /* NEQ  */
+    GEQ = 312,                     /* GEQ  */
+    T_EOF = 313,                   /* T_EOF  */
+    IDENTIFIER = 314,              /* IDENTIFIER  */
+    VALUE_STRING = 315,            /* VALUE_STRING  */
+    VALUE_INT = 316,               /* VALUE_INT  */
+    VALUE_FLOAT = 317,             /* VALUE_FLOAT  */
+    VALUE_BOOL = 318               /* VALUE_BOOL  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif
@@ -138,4 +141,4 @@ struct YYLTYPE
 int yyparse (void);
 
 
-#endif /* !YY_YY_MNT_D_STUDY_SUBMIT_RMDB_SRC_PARSER_YACC_TAB_H_INCLUDED  */
+#endif /* !YY_YY_HOME_LX_RMDB_SRC_PARSER_YACC_TAB_H_INCLUDED  */

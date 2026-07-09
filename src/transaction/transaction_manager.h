@@ -189,8 +189,19 @@ private:
         timestamp_t commit_ts{INVALID_TS};
     };
 
+    struct NoIndexWrite {
+        RmRecord record;
+        txn_id_t txn_id{INVALID_TXN_ID};
+        timestamp_t commit_ts{INVALID_TS};
+        bool committed{false};
+        bool aborted{false};
+    };
+
     std::string version_key(const std::string &tab_name, const Rid &rid) const;
     int64_t rid_key(const Rid &rid) const;
+    size_t record_hash(const RmRecord &record) const;
+    bool same_record(const RmRecord &lhs, const RmRecord &rhs) const;
+    void remember_no_index_write(const std::string &tab_name, const RmRecord &record, Transaction *txn);
     void ensure_base_version(const std::string &tab_name, const Rid &rid, RmFileHandle *fh, Context *context);
     Version *latest_version(const std::string &tab_name, const Rid &rid);
     Version *visible_version(const std::string &tab_name, const Rid &rid, Transaction *txn);
@@ -214,6 +225,8 @@ private:
     std::unordered_set<txn_id_t> active_txns_;
     std::unordered_map<std::string, std::vector<Version>> versions_;
     std::unordered_map<txn_id_t, std::unordered_set<std::string>> txn_version_keys_;
+    std::unordered_map<std::string, std::unordered_map<size_t, std::vector<NoIndexWrite>>> no_index_writes_;
+    std::unordered_map<txn_id_t, std::vector<std::pair<std::string, size_t>>> txn_no_index_write_keys_;
     std::unordered_map<txn_id_t, TxnSerState> ser_states_;
     std::unordered_map<txn_id_t, timestamp_t> committed_ts_;
     std::unordered_map<txn_id_t, std::unordered_set<txn_id_t>> rw_edges_;

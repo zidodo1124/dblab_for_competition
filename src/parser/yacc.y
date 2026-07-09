@@ -23,7 +23,7 @@ using namespace ast;
 // keywords
 %token SHOW TABLES CREATE TABLE DROP DESC INSERT INTO VALUES DELETE FROM ASC ORDER BY
 WHERE UPDATE SET SELECT INT CHAR FLOAT INDEX AND JOIN EXIT HELP TXN_BEGIN TXN_COMMIT TXN_ABORT TXN_ROLLBACK ORDER_BY ENABLE_NESTLOOP ENABLE_SORTMERGE STATIC_CHECKPOINT
-TRANSACTION ISOLATION LEVEL SNAPSHOT SERIALIZABLE
+TRANSACTION ISOLATION LEVEL SNAPSHOT SNAPSHOT_ISOLATION SERIALIZABLE SESSION CHARACTERISTICS
 GROUP HAVING AS COUNT MAX MIN SUM AVG LIMIT UNION
 // non-keywords
 %token LEQ NEQ GEQ T_EOF
@@ -64,6 +64,7 @@ GROUP HAVING AS COUNT MAX MIN SUM AVG LIMIT UNION
 %type <sv_orderby_dir> opt_asc_desc
 %type <sv_int> opt_limit_clause
 %type <sv_setKnobType> set_knob_type
+%type <sv_bool> isolationLevel
 
 %%
 start:
@@ -128,13 +129,36 @@ setStmt:
     {
         $$ = std::make_shared<SetStmt>($2, $4);
     }
-    |   SET TRANSACTION ISOLATION LEVEL SNAPSHOT ISOLATION
+    |   SET TRANSACTION ISOLATION LEVEL isolationLevel
     {
-        $$ = std::make_shared<SetTransactionIsolation>(false);
+        $$ = std::make_shared<SetTransactionIsolation>($5);
     }
-    |   SET TRANSACTION ISOLATION LEVEL SERIALIZABLE
+    |   SET SESSION TRANSACTION ISOLATION LEVEL isolationLevel
     {
-        $$ = std::make_shared<SetTransactionIsolation>(true);
+        $$ = std::make_shared<SetTransactionIsolation>($6);
+    }
+    |   SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL isolationLevel
+    {
+        $$ = std::make_shared<SetTransactionIsolation>($8);
+    }
+    ;
+
+isolationLevel:
+        SNAPSHOT ISOLATION
+    {
+        $$ = false;
+    }
+    |   SNAPSHOT_ISOLATION
+    {
+        $$ = false;
+    }
+    |   SNAPSHOT
+    {
+        $$ = false;
+    }
+    |   SERIALIZABLE
+    {
+        $$ = true;
     }
     ;
 

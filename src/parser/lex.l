@@ -74,9 +74,12 @@ single_op ";"|"("|")"|","|"*"|"="|">"|"<"|"."|"+"
 "WHERE" { return WHERE; }
 "UPDATE" { return UPDATE; }
 "SET" { return SET; }
+"SESSION" { return SESSION; }
+"CHARACTERISTICS" { return CHARACTERISTICS; }
 "TRANSACTION" { return TRANSACTION; }
 "ISOLATION" { return ISOLATION; }
 "LEVEL" { return LEVEL; }
+"SNAPSHOT_ISOLATION" { return SNAPSHOT_ISOLATION; }
 "SNAPSHOT" { return SNAPSHOT; }
 "SERIALIZABLE" { return SERIALIZABLE; }
 "SELECT" { return SELECT; }

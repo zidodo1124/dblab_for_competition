@@ -12,6 +12,7 @@ See the Mulan PSL v2 for more details. */
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <queue>
 
 #include "index/ix.h"
@@ -98,6 +99,8 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
         if (!has_other_active) {
             versions_.clear();
             txn_version_keys_.clear();
+            no_index_writes_.clear();
+            txn_no_index_write_keys_.clear();
             ser_states_.clear();
             committed_ts_.clear();
             rw_edges_.clear();
@@ -118,6 +121,26 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
                     }
                 }
                 txn_version_keys_.erase(key_it);
+            }
+            auto no_index_it = txn_no_index_write_keys_.find(txn_id);
+            if (no_index_it != txn_no_index_write_keys_.end()) {
+                for (const auto &key : no_index_it->second) {
+                    auto table_it = no_index_writes_.find(key.first);
+                    if (table_it == no_index_writes_.end()) {
+                        continue;
+                    }
+                    auto hash_it = table_it->second.find(key.second);
+                    if (hash_it == table_it->second.end()) {
+                        continue;
+                    }
+                    for (auto &write : hash_it->second) {
+                        if (write.txn_id == txn_id && !write.aborted) {
+                            write.committed = true;
+                            write.commit_ts = commit_ts;
+                        }
+                    }
+                }
+                txn_no_index_write_keys_.erase(no_index_it);
             }
             committed_ts_[txn_id] = commit_ts;
             auto ser_it = ser_states_.find(txn_id);
@@ -240,6 +263,37 @@ std::string TransactionManager::version_key(const std::string &tab_name, const R
 
 int64_t TransactionManager::rid_key(const Rid &rid) const {
     return (static_cast<int64_t>(rid.page_no) << 32) | static_cast<unsigned int>(rid.slot_no);
+}
+
+size_t TransactionManager::record_hash(const RmRecord &record) const {
+    const unsigned char *data = reinterpret_cast<const unsigned char *>(record.data);
+    size_t hash = 1469598103934665603ULL;
+    for (int i = 0; i < record.size; ++i) {
+        hash ^= static_cast<size_t>(data[i]);
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+bool TransactionManager::same_record(const RmRecord &lhs, const RmRecord &rhs) const {
+    return lhs.size == rhs.size && memcmp(lhs.data, rhs.data, lhs.size) == 0;
+}
+
+void TransactionManager::remember_no_index_write(const std::string &tab_name, const RmRecord &record,
+                                                 Transaction *txn) {
+    if (txn == nullptr) {
+        return;
+    }
+    const auto &tab = sm_manager_->db_.get_table(tab_name);
+    if (!tab.indexes.empty()) {
+        return;
+    }
+    size_t hash = record_hash(record);
+    NoIndexWrite write;
+    write.record = record;
+    write.txn_id = txn->get_transaction_id();
+    no_index_writes_[tab_name][hash].push_back(std::move(write));
+    txn_no_index_write_keys_[txn->get_transaction_id()].push_back({tab_name, hash});
 }
 
 void TransactionManager::ensure_base_version(const std::string &tab_name, const Rid &rid, RmFileHandle *fh,
@@ -381,6 +435,24 @@ void TransactionManager::check_insert_conflict(const std::string &tab_name, cons
     }
     const auto &tab = sm_manager_->db_.get_table(tab_name);
     if (tab.indexes.empty()) {
+        size_t hash = record_hash(record);
+        std::lock_guard<std::mutex> lock(mvcc_latch_);
+        auto table_it = no_index_writes_.find(tab_name);
+        if (table_it == no_index_writes_.end()) {
+            return;
+        }
+        auto hash_it = table_it->second.find(hash);
+        if (hash_it == table_it->second.end()) {
+            return;
+        }
+        for (auto &write : hash_it->second) {
+            if (write.aborted || write.txn_id == txn->get_transaction_id() || !same_record(record, write.record)) {
+                continue;
+            }
+            if (!write.committed || write.commit_ts > txn->get_start_ts()) {
+                throw TransactionAbortException(txn->get_transaction_id(), AbortReason::DEADLOCK_PREVENTION);
+            }
+        }
         return;
     }
     std::lock_guard<std::mutex> lock(mvcc_latch_);
@@ -436,6 +508,7 @@ void TransactionManager::append_insert_version(const std::string &tab_name, cons
     version.txn_id = txn->get_transaction_id();
     versions_[key].push_back(version);
     txn_version_keys_[txn->get_transaction_id()].insert(std::move(key));
+    remember_no_index_write(tab_name, record, txn);
 }
 
 void TransactionManager::append_update_version(const std::string &tab_name, const Rid &rid,
@@ -462,6 +535,8 @@ void TransactionManager::append_update_version(const std::string &tab_name, cons
     version.txn_id = txn->get_transaction_id();
     list.push_back(version);
     txn_version_keys_[txn->get_transaction_id()].insert(std::move(key));
+    remember_no_index_write(tab_name, old_record, txn);
+    remember_no_index_write(tab_name, new_record, txn);
 }
 
 void TransactionManager::append_delete_version(const std::string &tab_name, const Rid &rid,
@@ -488,6 +563,7 @@ void TransactionManager::append_delete_version(const std::string &tab_name, cons
     version.deleted = true;
     list.push_back(version);
     txn_version_keys_[txn->get_transaction_id()].insert(std::move(key));
+    remember_no_index_write(tab_name, old_record, txn);
 }
 
 bool TransactionManager::record_matches(const std::string &tab_name, const std::vector<Condition> &conds,
@@ -702,6 +778,8 @@ void TransactionManager::cleanup_abort(Transaction *txn) {
     if (!has_other_active) {
         versions_.clear();
         txn_version_keys_.clear();
+        no_index_writes_.clear();
+        txn_no_index_write_keys_.clear();
         ser_states_.clear();
         committed_ts_.clear();
         rw_edges_.clear();
@@ -722,6 +800,32 @@ void TransactionManager::cleanup_abort(Transaction *txn) {
             }
         }
         txn_version_keys_.erase(key_it);
+    }
+    auto no_index_it = txn_no_index_write_keys_.find(txn_id);
+    if (no_index_it != txn_no_index_write_keys_.end()) {
+        for (const auto &key : no_index_it->second) {
+            auto table_it = no_index_writes_.find(key.first);
+            if (table_it == no_index_writes_.end()) {
+                continue;
+            }
+            auto hash_it = table_it->second.find(key.second);
+            if (hash_it == table_it->second.end()) {
+                continue;
+            }
+            for (auto &write : hash_it->second) {
+                if (write.txn_id == txn_id) {
+                    write.aborted = true;
+                }
+            }
+            auto &writes = hash_it->second;
+            writes.erase(std::remove_if(writes.begin(), writes.end(),
+                                        [&](const NoIndexWrite &write) { return write.txn_id == txn_id; }),
+                         writes.end());
+            if (writes.empty()) {
+                table_it->second.erase(hash_it);
+            }
+        }
+        txn_no_index_write_keys_.erase(no_index_it);
     }
     ser_states_.erase(txn_id);
     committed_ts_.erase(txn_id);
@@ -788,6 +892,13 @@ void TransactionManager::clear_table_versions(const std::string &tab_name) {
                 ++it;
             }
         }
+    }
+    no_index_writes_.erase(tab_name);
+    for (auto &entry : txn_no_index_write_keys_) {
+        auto &keys = entry.second;
+        keys.erase(std::remove_if(keys.begin(), keys.end(),
+                                  [&](const auto &key) { return key.first == tab_name; }),
+                   keys.end());
     }
     for (auto &entry : ser_states_) {
         auto &reads = entry.second.read_records;

@@ -87,6 +87,16 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
         return;
     }
     txn_id_t txn_id = txn->get_transaction_id();
+
+    lsn_t commit_lsn = INVALID_LSN;
+    if (log_manager != nullptr) {
+        CommitLogRecord log_record(txn_id);
+        commit_lsn = log_manager->add_log_record(&log_record, txn);
+        write_guard.unlock();
+        log_manager->flush_log_to_lsn(commit_lsn);
+        write_guard.lock();
+    }
+
     bool has_other_active = false;
     {
         std::lock_guard<std::mutex> lock(latch_);
@@ -168,11 +178,6 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
     while (!lock_set->empty()) {
         auto lock_data_id = *lock_set->begin();
         lock_manager_->unlock(txn, lock_data_id);
-    }
-    if (log_manager != nullptr) {
-        CommitLogRecord log_record(txn->get_transaction_id());
-        log_manager->add_log_record(&log_record, txn);
-        log_manager->flush_log_to_disk();
     }
     txn->set_state(TransactionState::COMMITTED);
     {

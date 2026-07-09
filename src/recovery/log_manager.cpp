@@ -49,7 +49,6 @@ void LogManager::flush_log_to_disk() {
     if (next_lsn_ != INVALID_LSN) {
         persist_lsn_ = next_lsn_ - 1;
     }
-    memset(log_buffer_.buffer_, 0, sizeof(log_buffer_.buffer_));
     log_buffer_.offset_ = 0;
 }
 
@@ -62,7 +61,6 @@ void LogManager::flush_log_to_lsn(lsn_t lsn) {
     if (log_buffer_.offset_ > 0) {
         disk_manager_->write_log(log_buffer_.buffer_, log_buffer_.offset_);
         persist_lsn_ = next_lsn_ - 1;
-        memset(log_buffer_.buffer_, 0, sizeof(log_buffer_.buffer_));
         log_buffer_.offset_ = 0;
     }
 }
@@ -79,7 +77,6 @@ lsn_t LogManager::add_log_record(LogRecord* log_record, Transaction* txn) {
     if (log_buffer_.is_full(log_record->log_tot_len_)) {
         disk_manager_->write_log(log_buffer_.buffer_, log_buffer_.offset_);
         persist_lsn_ = next_lsn_ - 1;
-        memset(log_buffer_.buffer_, 0, sizeof(log_buffer_.buffer_));
         log_buffer_.offset_ = 0;
     }
     log_record->lsn_ = next_lsn_;

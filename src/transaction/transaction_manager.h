@@ -211,6 +211,7 @@ private:
 
     std::mutex mvcc_latch_;
     std::mutex write_latch_;
+    std::unordered_set<txn_id_t> active_txns_;
     std::unordered_map<std::string, std::vector<Version>> versions_;
     std::unordered_map<txn_id_t, std::unordered_set<std::string>> txn_version_keys_;
     std::unordered_map<txn_id_t, TxnSerState> ser_states_;

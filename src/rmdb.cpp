@@ -103,6 +103,52 @@ std::optional<std::string> parse_show_index_sql(const std::string &sql) {
     return std::nullopt;
 }
 
+std::optional<std::pair<std::string, std::string>> parse_load_sql(const std::string &sql) {
+    std::string normalized = sql;
+    for (char &ch : normalized) {
+        if (ch == ';') {
+            ch = ' ';
+        }
+    }
+    std::istringstream iss(normalized);
+    std::string load;
+    std::string file_name;
+    std::string into;
+    std::string tab_name;
+    std::string extra;
+    if (!(iss >> load >> file_name >> into >> tab_name) || (iss >> extra)) {
+        return std::nullopt;
+    }
+    auto lower = [](std::string s) {
+        for (char &ch : s) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        return s;
+    };
+    auto valid_identifier = [](const std::string &s) {
+        if (s.empty() || !(std::isalpha(static_cast<unsigned char>(s[0])) || s[0] == '_')) {
+            return false;
+        }
+        for (char ch : s) {
+            if (ch != '_' && !std::isalnum(static_cast<unsigned char>(ch))) {
+                return false;
+            }
+        }
+        return true;
+    };
+    auto strip_quotes = [](std::string s) {
+        if (s.size() >= 2 && ((s.front() == '\'' && s.back() == '\'') ||
+                              (s.front() == '"' && s.back() == '"'))) {
+            return s.substr(1, s.size() - 2);
+        }
+        return s;
+    };
+    if (lower(load) != "load" || lower(into) != "into" || !valid_identifier(tab_name)) {
+        return std::nullopt;
+    }
+    return std::make_pair(strip_quotes(file_name), tab_name);
+}
+
 bool should_report_parse_failure(const char *sql) {
     std::string s = sql == nullptr ? "" : sql;
     auto begin = std::find_if(s.begin(), s.end(), [](unsigned char ch) {
@@ -286,8 +332,26 @@ void *client_handler(void *sock_fd) {
 
         // 用于判断是否已经调用了yy_delete_buffer来删除buf
         bool finish_analyze = false;
+        auto load_command = parse_load_sql(data_recv);
         auto show_index_table = parse_show_index_sql(data_recv);
-        if (show_index_table.has_value()) {
+        if (load_command.has_value()) {
+            finish_analyze = true;
+            try {
+                sm_manager->load_table(load_command->first, load_command->second, context);
+            } catch (RMDBError &e) {
+                std::cerr << e.what() << std::endl;
+                memcpy(data_send, e.what(), e.get_msg_len());
+                data_send[e.get_msg_len()] = '\n';
+                data_send[e.get_msg_len() + 1] = '\0';
+                offset = e.get_msg_len() + 1;
+                if (output_file_enabled.load(std::memory_order_relaxed)) {
+                    std::fstream outfile;
+                    outfile.open("output.txt", std::ios::out | std::ios::app);
+                    outfile << "failure\n";
+                    outfile.close();
+                }
+            }
+        } else if (show_index_table.has_value()) {
             auto parse_tree = std::make_shared<ast::ShowIndex>(*show_index_table);
             finish_analyze = true;
             execute_parse_tree(std::move(parse_tree), data_send, offset, &txn_id, context);

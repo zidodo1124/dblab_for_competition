@@ -13,7 +13,11 @@ See the Mulan PSL v2 for more details. */
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <cerrno>
+#include <cstdlib>
 #include <fstream>
+#include <mutex>
+#include <sstream>
 
 #include "index/ix.h"
 #include "common/config.h"
@@ -21,6 +25,79 @@ See the Mulan PSL v2 for more details. */
 #include "record/rm_scan.h"
 #include "record_printer.h"
 #include "transaction/transaction_manager.h"
+
+namespace {
+
+std::vector<std::string> split_csv_line(const std::string &line) {
+    std::vector<std::string> fields;
+    std::string field;
+    bool in_quote = false;
+    for (size_t i = 0; i < line.size(); ++i) {
+        char ch = line[i];
+        if (ch == '"') {
+            if (in_quote && i + 1 < line.size() && line[i + 1] == '"') {
+                field.push_back('"');
+                ++i;
+            } else {
+                in_quote = !in_quote;
+            }
+        } else if (ch == ',' && !in_quote) {
+            fields.push_back(std::move(field));
+            field.clear();
+        } else {
+            field.push_back(ch);
+        }
+    }
+    if (!field.empty() && field.back() == '\r') {
+        field.pop_back();
+    }
+    fields.push_back(std::move(field));
+    return fields;
+}
+
+bool is_header_line(const std::vector<std::string> &fields, const TabMeta &tab) {
+    if (fields.size() != tab.cols.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < fields.size(); ++i) {
+        if (fields[i] != tab.cols[i].name) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int parse_int_field(const std::string &field, const std::string &file_name, size_t line_no) {
+    char *end = nullptr;
+    errno = 0;
+    long value = std::strtol(field.c_str(), &end, 10);
+    if (errno != 0 || end == field.c_str() || *end != '\0') {
+        throw InternalError("Invalid int in load file " + file_name + " at line " + std::to_string(line_no));
+    }
+    return static_cast<int>(value);
+}
+
+float parse_float_field(const std::string &field, const std::string &file_name, size_t line_no) {
+    char *end = nullptr;
+    errno = 0;
+    float value = std::strtof(field.c_str(), &end);
+    if (errno != 0 || end == field.c_str() || *end != '\0') {
+        throw InternalError("Invalid float in load file " + file_name + " at line " + std::to_string(line_no));
+    }
+    return value;
+}
+
+std::vector<char> make_index_key(const RmRecord &rec, const IndexMeta &index) {
+    std::vector<char> key(index.col_tot_len);
+    int offset = 0;
+    for (const auto &col : index.cols) {
+        memcpy(key.data() + offset, rec.data + col.offset, col.len);
+        offset += col.len;
+    }
+    return key;
+}
+
+}  // namespace
 
 /**
  * @description: 判断是否为一个文件夹
@@ -405,4 +482,90 @@ void SmManager::drop_index(const std::string& tab_name, const std::vector<ColMet
         col_names.push_back(col.name);
     }
     drop_index(tab_name, col_names, context);
+}
+
+size_t SmManager::load_table(const std::string& file_name, const std::string& tab_name, Context* context) {
+    TabMeta &tab = db_.get_table(tab_name);
+    auto fh = fhs_.at(tab_name).get();
+    std::ifstream input(file_name);
+    if (!input.is_open()) {
+        throw FileNotFoundError(file_name);
+    }
+
+    auto write_guard = context != nullptr && context->txn_mgr_ != nullptr
+                       ? context->txn_mgr_->acquire_write_latch()
+                       : std::unique_lock<std::mutex>();
+
+    std::string line;
+    size_t line_no = 0;
+    size_t loaded = 0;
+    bool first_data_line = true;
+    while (std::getline(input, line)) {
+        ++line_no;
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (line.empty()) {
+            continue;
+        }
+
+        std::vector<std::string> fields = split_csv_line(line);
+        if (first_data_line && is_header_line(fields, tab)) {
+            first_data_line = false;
+            continue;
+        }
+        first_data_line = false;
+        if (fields.size() != tab.cols.size()) {
+            throw InternalError("Invalid value count in load file " + file_name +
+                                " at line " + std::to_string(line_no));
+        }
+
+        RmRecord rec(fh->get_file_hdr().record_size);
+        for (size_t i = 0; i < tab.cols.size(); ++i) {
+            const auto &col = tab.cols[i];
+            char *dest = rec.data + col.offset;
+            if (col.type == TYPE_INT) {
+                int value = parse_int_field(fields[i], file_name, line_no);
+                memcpy(dest, &value, sizeof(value));
+            } else if (col.type == TYPE_FLOAT) {
+                float value = parse_float_field(fields[i], file_name, line_no);
+                memcpy(dest, &value, sizeof(value));
+            } else if (col.type == TYPE_STRING) {
+                if (static_cast<int>(fields[i].size()) > col.len) {
+                    throw StringOverflowError();
+                }
+                memset(dest, 0, col.len);
+                memcpy(dest, fields[i].data(), fields[i].size());
+            }
+        }
+
+        std::vector<std::vector<char>> keys;
+        keys.reserve(tab.indexes.size());
+        for (const auto &index : tab.indexes) {
+            auto key = make_index_key(rec, index);
+            auto ih = ihs_.at(ix_manager_->get_index_name(tab_name, index.cols)).get();
+            std::vector<Rid> existing;
+            if (ih->get_value(key.data(), &existing, context == nullptr ? nullptr : context->txn_)) {
+                throw UniqueConstraintViolationError(tab_name);
+            }
+            keys.push_back(std::move(key));
+        }
+
+        Rid rid = fh->insert_record(rec.data, nullptr);
+        for (size_t i = 0; i < tab.indexes.size(); ++i) {
+            const auto &index = tab.indexes[i];
+            auto ih = ihs_.at(ix_manager_->get_index_name(tab_name, index.cols)).get();
+            ih->insert_entry(keys[i].data(), rid, context == nullptr ? nullptr : context->txn_);
+        }
+        ++loaded;
+    }
+
+    fh->flush_file_hdr();
+    buffer_pool_manager_->flush_all_pages(fh->GetFd());
+    for (const auto &index : tab.indexes) {
+        auto ih = ihs_.at(ix_manager_->get_index_name(tab_name, index.cols)).get();
+        ih->flush_file_hdr();
+        buffer_pool_manager_->flush_all_pages(ih->get_fd());
+    }
+    return loaded;
 }

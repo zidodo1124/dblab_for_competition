@@ -10,6 +10,7 @@ See the Mulan PSL v2 for more details. */
 
 #include "buffer_pool_manager.h"
 
+#include <algorithm>
 #include <unordered_set>
 
 #include "recovery/log_manager.h"
@@ -221,17 +222,42 @@ void BufferPoolManager::flush_dirty_pages(const std::vector<int> &fds, bool ensu
     }
     std::unordered_set<int> target_fds(fds.begin(), fds.end());
     lsn_t persisted_lsn = INVALID_LSN;
-    if (log_manager_ != nullptr) {
+    if (ensure_wal && log_manager_ != nullptr) {
+        while (true) {
+            log_manager_->flush_log_to_disk();
+            persisted_lsn = log_manager_->get_persist_lsn();
+            lsn_t max_needed_lsn = INVALID_LSN;
+            {
+                std::scoped_lock lock{latch_};
+                for (size_t frame_id = 0; frame_id < pool_size_; frame_id++) {
+                    Page *page = &pages_[frame_id];
+                    PageId page_id = page->get_page_id();
+                    if (target_fds.count(page_id.fd) > 0 && page_id.page_no != INVALID_PAGE_ID && page->is_dirty_) {
+                        lsn_t page_lsn = page->get_page_lsn();
+                        if (page_lsn != INVALID_LSN && page_lsn > persisted_lsn) {
+                            max_needed_lsn = std::max(max_needed_lsn, page_lsn);
+                        }
+                    }
+                }
+            }
+            if (max_needed_lsn == INVALID_LSN) {
+                break;
+            }
+            log_manager_->flush_log_to_lsn(max_needed_lsn);
+            lsn_t after_flush_lsn = log_manager_->get_persist_lsn();
+            if (after_flush_lsn < max_needed_lsn && after_flush_lsn <= persisted_lsn) {
+                break;
+            }
+        }
+    } else if (log_manager_ != nullptr) {
         log_manager_->flush_log_to_disk();
-        persisted_lsn = log_manager_->get_persist_lsn();
     }
     std::scoped_lock lock{latch_};
     for (size_t frame_id = 0; frame_id < pool_size_; frame_id++) {
         Page *page = &pages_[frame_id];
         PageId page_id = page->get_page_id();
         if (target_fds.count(page_id.fd) > 0 && page_id.page_no != INVALID_PAGE_ID && page->is_dirty_) {
-            bool check_page_lsn = ensure_wal && log_manager_ != nullptr && page->get_page_lsn() > persisted_lsn;
-            write_page_to_disk(page, page_id, check_page_lsn);
+            write_page_to_disk(page, page_id, false);
             page->is_dirty_ = false;
         }
     }
@@ -240,16 +266,39 @@ void BufferPoolManager::flush_dirty_pages(const std::vector<int> &fds, bool ensu
 void BufferPoolManager::flush_dirty_pages() {
     lsn_t persisted_lsn = INVALID_LSN;
     if (log_manager_ != nullptr) {
-        log_manager_->flush_log_to_disk();
-        persisted_lsn = log_manager_->get_persist_lsn();
+        while (true) {
+            log_manager_->flush_log_to_disk();
+            persisted_lsn = log_manager_->get_persist_lsn();
+            lsn_t max_needed_lsn = INVALID_LSN;
+            {
+                std::scoped_lock lock{latch_};
+                for (size_t frame_id = 0; frame_id < pool_size_; frame_id++) {
+                    Page *page = &pages_[frame_id];
+                    PageId page_id = page->get_page_id();
+                    if (page_id.page_no != INVALID_PAGE_ID && page->is_dirty_) {
+                        lsn_t page_lsn = page->get_page_lsn();
+                        if (page_lsn != INVALID_LSN && page_lsn > persisted_lsn) {
+                            max_needed_lsn = std::max(max_needed_lsn, page_lsn);
+                        }
+                    }
+                }
+            }
+            if (max_needed_lsn == INVALID_LSN) {
+                break;
+            }
+            log_manager_->flush_log_to_lsn(max_needed_lsn);
+            lsn_t after_flush_lsn = log_manager_->get_persist_lsn();
+            if (after_flush_lsn < max_needed_lsn && after_flush_lsn <= persisted_lsn) {
+                break;
+            }
+        }
     }
     std::scoped_lock lock{latch_};
     for (size_t frame_id = 0; frame_id < pool_size_; frame_id++) {
         Page *page = &pages_[frame_id];
         PageId page_id = page->get_page_id();
         if (page_id.page_no != INVALID_PAGE_ID && page->is_dirty_) {
-            bool check_page_lsn = log_manager_ != nullptr && page->get_page_lsn() > persisted_lsn;
-            write_page_to_disk(page, page_id, check_page_lsn);
+            write_page_to_disk(page, page_id, false);
             page->is_dirty_ = false;
         }
     }

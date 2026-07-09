@@ -8,6 +8,7 @@ EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
 MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 See the Mulan PSL v2 for more details. */
 
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include "log_manager.h"
@@ -124,8 +125,11 @@ void LogManager::create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_
         bpm->flush_dirty_pages(flush_fds);
     }
     for (const char *restart_name : {"db.restart", "restart.ckpt"}) {
-        std::ofstream restart(restart_name, std::ios::trunc);
+        std::string tmp_name = std::string(restart_name) + ".tmp";
+        std::ofstream restart(tmp_name, std::ios::trunc);
         restart << checkpoint_offset;
         restart.flush();
+        restart.close();
+        std::rename(tmp_name.c_str(), restart_name);
     }
 }

@@ -427,11 +427,14 @@ void RecoveryManager::undo() {
         }
     }
 
+    std::vector<int> flush_fds;
+    flush_fds.reserve(sm_manager_->fhs_.size() + sm_manager_->ihs_.size());
     for (auto &entry : sm_manager_->fhs_) {
         entry.second->flush_file_hdr();
-        buffer_pool_manager_->flush_all_pages(entry.second->GetFd());
+        flush_fds.push_back(entry.second->GetFd());
     }
     for (auto &entry : sm_manager_->ihs_) {
-        buffer_pool_manager_->flush_all_pages(entry.second->get_fd());
+        flush_fds.push_back(entry.second->get_fd());
     }
+    buffer_pool_manager_->flush_dirty_pages(flush_fds);
 }

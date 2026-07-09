@@ -48,7 +48,7 @@ void BufferPoolManager::update_page(Page *page, PageId new_page_id, frame_id_t n
     PageId old_page_id = page->get_page_id();
     if (old_page_id.page_no != INVALID_PAGE_ID) {
         if (page->is_dirty_) {
-            write_page_to_disk(page, old_page_id);
+            write_page_to_disk(page, old_page_id, true);
             page->is_dirty_ = false;
         }
         page_table_.erase(old_page_id);
@@ -182,7 +182,7 @@ bool BufferPoolManager::delete_page(PageId page_id) {
         return false;
     }
     if (page->is_dirty_) {
-        write_page_to_disk(page, page_id);
+        write_page_to_disk(page, page_id, true);
     }
     page_table_.erase(it);
     replacer_->pin(frame_id);

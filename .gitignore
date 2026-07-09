@@ -8,7 +8,8 @@ gate10_local_basic/
 gate10_local_*_auto/
 
 # Local task notes, learning notes, and regression/stress test suites.
-# Keep all ad-hoc test scripts, server logs, and generated test DBs under z_loctest/.
+# Keep local test scripts under z_tasks_todo/local_tests/.
+# Keep generated server logs, temp DBs, perf files, and local binaries under z_loctest/.
 z_loctest/
 z_tasks_todo/
 z_task_done/

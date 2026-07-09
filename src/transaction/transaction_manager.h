@@ -212,7 +212,9 @@ private:
     std::mutex mvcc_latch_;
     std::mutex write_latch_;
     std::unordered_map<std::string, std::vector<Version>> versions_;
+    std::unordered_map<txn_id_t, std::unordered_set<std::string>> txn_version_keys_;
     std::unordered_map<txn_id_t, TxnSerState> ser_states_;
+    std::unordered_map<txn_id_t, timestamp_t> committed_ts_;
     std::unordered_map<txn_id_t, std::unordered_set<txn_id_t>> rw_edges_;
 
     std::atomic<timestamp_t> last_commit_ts_{0};    // 最后提交的时间戳,仅用于MVCC

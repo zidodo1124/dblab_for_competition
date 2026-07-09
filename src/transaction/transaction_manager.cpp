@@ -85,17 +85,43 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
     timestamp_t commit_ts = next_timestamp_++;
     {
         std::lock_guard<std::mutex> mvcc_lock(mvcc_latch_);
-        for (auto &entry : versions_) {
-            for (auto &version : entry.second) {
-                if (version.txn_id == txn->get_transaction_id() && !version.aborted) {
+        txn_id_t txn_id = txn->get_transaction_id();
+        auto key_it = txn_version_keys_.find(txn_id);
+        if (key_it != txn_version_keys_.end()) {
+            for (const auto &key : key_it->second) {
+                auto version_it = versions_.find(key);
+                if (version_it == versions_.end()) {
+                    continue;
+                }
+                for (auto &version : version_it->second) {
+                    if (version.txn_id != txn_id || version.aborted) {
+                        continue;
+                    }
                     version.committed = true;
                     version.commit_ts = commit_ts;
                 }
             }
+            txn_version_keys_.erase(key_it);
         }
-        auto &ser_state = ser_states_[txn->get_transaction_id()];
-        ser_state.committed = true;
-        ser_state.commit_ts = commit_ts;
+        committed_ts_[txn_id] = commit_ts;
+        auto ser_it = ser_states_.find(txn_id);
+        if (ser_it != ser_states_.end()) {
+            auto &ser_state = ser_it->second;
+            ser_state.committed = true;
+            ser_state.commit_ts = commit_ts;
+            bool has_edges = rw_edges_.count(txn_id) > 0;
+            if (!has_edges) {
+                for (auto &entry : rw_edges_) {
+                    if (entry.second.count(txn_id) > 0) {
+                        has_edges = true;
+                        break;
+                    }
+                }
+            }
+            if (!has_edges && ser_state.read_records.empty() && ser_state.predicates.empty()) {
+                ser_states_.erase(ser_it);
+            }
+        }
     }
     clear_write_set(txn);
     auto lock_set = txn->get_lock_set();
@@ -319,8 +345,11 @@ void TransactionManager::check_insert_conflict(const std::string &tab_name, cons
     if (txn == nullptr) {
         return;
     }
-    std::lock_guard<std::mutex> lock(mvcc_latch_);
     const auto &tab = sm_manager_->db_.get_table(tab_name);
+    if (tab.indexes.empty()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mvcc_latch_);
     for (auto &entry : versions_) {
         if (entry.first.rfind(tab_name + "#", 0) != 0 || entry.second.empty()) {
             continue;
@@ -366,11 +395,13 @@ void TransactionManager::append_insert_version(const std::string &tab_name, cons
         return;
     }
     std::lock_guard<std::mutex> lock(mvcc_latch_);
+    std::string key = version_key(tab_name, rid);
     Version version;
     version.rid = rid;
     version.record = record;
     version.txn_id = txn->get_transaction_id();
-    versions_[version_key(tab_name, rid)].push_back(version);
+    versions_[key].push_back(version);
+    txn_version_keys_[txn->get_transaction_id()].insert(std::move(key));
 }
 
 void TransactionManager::append_update_version(const std::string &tab_name, const Rid &rid,
@@ -380,7 +411,8 @@ void TransactionManager::append_update_version(const std::string &tab_name, cons
         return;
     }
     std::lock_guard<std::mutex> lock(mvcc_latch_);
-    auto &list = versions_[version_key(tab_name, rid)];
+    std::string key = version_key(tab_name, rid);
+    auto &list = versions_[key];
     if (list.empty()) {
         Version base;
         base.rid = rid;
@@ -395,6 +427,7 @@ void TransactionManager::append_update_version(const std::string &tab_name, cons
     version.record = new_record;
     version.txn_id = txn->get_transaction_id();
     list.push_back(version);
+    txn_version_keys_[txn->get_transaction_id()].insert(std::move(key));
 }
 
 void TransactionManager::append_delete_version(const std::string &tab_name, const Rid &rid,
@@ -403,7 +436,8 @@ void TransactionManager::append_delete_version(const std::string &tab_name, cons
         return;
     }
     std::lock_guard<std::mutex> lock(mvcc_latch_);
-    auto &list = versions_[version_key(tab_name, rid)];
+    std::string key = version_key(tab_name, rid);
+    auto &list = versions_[key];
     if (list.empty()) {
         Version base;
         base.rid = rid;
@@ -419,6 +453,7 @@ void TransactionManager::append_delete_version(const std::string &tab_name, cons
     version.txn_id = txn->get_transaction_id();
     version.deleted = true;
     list.push_back(version);
+    txn_version_keys_[txn->get_transaction_id()].insert(std::move(key));
 }
 
 bool TransactionManager::record_matches(const std::string &tab_name, const std::vector<Condition> &conds,
@@ -574,15 +609,26 @@ bool TransactionManager::creates_rw_cycle(txn_id_t from, txn_id_t to) {
 }
 
 bool TransactionManager::tout_committed_before_tin(txn_id_t tout, txn_id_t tin) const {
-    auto tout_it = ser_states_.find(tout);
-    if (tout_it == ser_states_.end() || !tout_it->second.committed) {
-        return false;
+    auto tout_commit = committed_ts_.find(tout);
+    if (tout_commit == committed_ts_.end()) {
+        auto tout_it = ser_states_.find(tout);
+        if (tout_it == ser_states_.end() || !tout_it->second.committed) {
+            return false;
+        }
+        timestamp_t tout_ts = tout_it->second.commit_ts;
+        auto tin_commit = committed_ts_.find(tin);
+        if (tin_commit == committed_ts_.end()) {
+            auto tin_it = ser_states_.find(tin);
+            return tin_it == ser_states_.end() || !tin_it->second.committed;
+        }
+        return tout_ts < tin_commit->second;
     }
-    auto tin_it = ser_states_.find(tin);
-    if (tin_it == ser_states_.end() || !tin_it->second.committed) {
-        return true;
+    auto tin_commit = committed_ts_.find(tin);
+    if (tin_commit == committed_ts_.end()) {
+        auto tin_it = ser_states_.find(tin);
+        return tin_it == ser_states_.end() || !tin_it->second.committed;
     }
-    return tout_it->second.commit_ts < tin_it->second.commit_ts;
+    return tout_commit->second < tin_commit->second;
 }
 
 bool TransactionManager::creates_dangerous_structure(txn_id_t reader, txn_id_t writer) {
@@ -613,14 +659,24 @@ void TransactionManager::cleanup_abort(Transaction *txn) {
     }
     std::lock_guard<std::mutex> lock(mvcc_latch_);
     txn_id_t txn_id = txn->get_transaction_id();
-    for (auto &entry : versions_) {
-        for (auto &version : entry.second) {
-            if (version.txn_id == txn_id) {
+    auto key_it = txn_version_keys_.find(txn_id);
+    if (key_it != txn_version_keys_.end()) {
+        for (const auto &key : key_it->second) {
+            auto version_it = versions_.find(key);
+            if (version_it == versions_.end()) {
+                continue;
+            }
+            for (auto &version : version_it->second) {
+                if (version.txn_id != txn_id) {
+                    continue;
+                }
                 version.aborted = true;
             }
         }
+        txn_version_keys_.erase(key_it);
     }
     ser_states_.erase(txn_id);
+    committed_ts_.erase(txn_id);
     rw_edges_.erase(txn_id);
     for (auto &entry : rw_edges_) {
         entry.second.erase(txn_id);
@@ -655,7 +711,10 @@ std::vector<CheckpointTxnInfo> TransactionManager::active_txn_infos(txn_id_t exc
         Transaction *txn = entry.second;
         if (txn != nullptr && txn->get_state() != TransactionState::COMMITTED &&
             txn->get_state() != TransactionState::ABORTED) {
-            active.push_back(CheckpointTxnInfo{entry.first, txn->get_first_lsn()});
+            lsn_t first_write_lsn = txn->get_first_write_lsn();
+            if (first_write_lsn != INVALID_LSN) {
+                active.push_back(CheckpointTxnInfo{entry.first, first_write_lsn});
+            }
         }
     }
     return active;
@@ -669,6 +728,15 @@ void TransactionManager::clear_table_versions(const std::string &tab_name) {
             it = versions_.erase(it);
         } else {
             ++it;
+        }
+    }
+    for (auto &entry : txn_version_keys_) {
+        for (auto it = entry.second.begin(); it != entry.second.end();) {
+            if (it->rfind(prefix, 0) == 0) {
+                it = entry.second.erase(it);
+            } else {
+                ++it;
+            }
         }
     }
     for (auto &entry : ser_states_) {

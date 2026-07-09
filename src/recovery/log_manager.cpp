@@ -89,6 +89,11 @@ lsn_t LogManager::add_log_record(LogRecord* log_record, Transaction* txn) {
         if (txn->get_first_lsn() == INVALID_LSN) {
             txn->set_first_lsn(log_record->lsn_);
         }
+        if ((log_record->log_type_ == LogType::INSERT || log_record->log_type_ == LogType::DELETE ||
+             log_record->log_type_ == LogType::UPDATE) &&
+            txn->get_first_write_lsn() == INVALID_LSN) {
+            txn->set_first_write_lsn(log_record->lsn_);
+        }
         txn->set_prev_lsn(log_record->lsn_);
     }
     log_record->serialize(log_buffer_.buffer_ + log_buffer_.offset_);

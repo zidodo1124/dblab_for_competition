@@ -1,5 +1,6 @@
 # Build output.
 build/
+build-profile/
 
 # Local-only debug/test databases and generated artifacts.
 # These are for broad local checks only; do not push them to remote branches.
@@ -15,3 +16,7 @@ z_tasks_todo/
 z_task_done/
 z_teach/
 z_learn/
+
+# Local performance profiling outputs.
+perf_runs/
+tools/FlameGraph/

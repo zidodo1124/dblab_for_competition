@@ -19,6 +19,7 @@ See the Mulan PSL v2 for more details. */
 #include "executor_update.h"
 #include "index/ix.h"
 #include "record_printer.h"
+#include "common/config.h"
 
 #include <fstream>
 
@@ -179,7 +180,8 @@ void QlManager::select_from(std::unique_ptr<AbstractExecutor> executorTreeRoot, 
     rec_printer.print_separator(context);
     // print header into file
     std::fstream outfile;
-    if (output_file_enabled()) {
+    bool write_output = output_file_enabled.load(std::memory_order_relaxed);
+    if (write_output) {
         outfile.open("output.txt", std::ios::out | std::ios::app);
         outfile << "|";
         for(int i = 0; i < captions.size(); ++i) {
@@ -201,7 +203,7 @@ void QlManager::select_from(std::unique_ptr<AbstractExecutor> executorTreeRoot, 
         // print record into buffer
         rec_printer.print_record(columns, context);
         // print record into file
-        if (output_file_enabled()) {
+        if (write_output) {
             outfile << "|";
             for(int i = 0; i < columns.size(); ++i) {
                 outfile << " " << columns[i] << " |";
@@ -210,7 +212,7 @@ void QlManager::select_from(std::unique_ptr<AbstractExecutor> executorTreeRoot, 
         }
         num_rec++;
     }
-    if (outfile.is_open()) {
+    if (write_output) {
         outfile.close();
     }
     // Print footer into buffer
@@ -233,7 +235,7 @@ void QlManager::explain_analyze(std::unique_ptr<AbstractExecutor> executorTreeRo
         *(context->offset_) += plan.length();
     }
 
-    if (output_file_enabled()) {
+    if (output_file_enabled.load(std::memory_order_relaxed)) {
         std::fstream outfile;
         outfile.open("output.txt", std::ios::out | std::ios::app);
         outfile << plan;

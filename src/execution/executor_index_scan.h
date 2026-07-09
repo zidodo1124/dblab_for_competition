@@ -11,6 +11,7 @@ See the Mulan PSL v2 for more details. */
 #pragma once
 
 #include <algorithm>
+#include <unordered_set>
 #include <limits>
 #include <map>
 #include <sstream>
@@ -34,6 +35,7 @@ class IndexScanExecutor : public AbstractExecutor {
     size_t len_;
     std::vector<Condition> fed_conds_;
     std::vector<Condition> outer_key_conds_;
+    std::vector<Condition> current_scan_conds_;
 
     std::vector<std::string> index_col_names_;
     IndexMeta index_meta_;
@@ -197,8 +199,7 @@ class IndexScanExecutor : public AbstractExecutor {
         while (cursor_ < visible_records_.size()) {
             rid_ = visible_records_[cursor_].first;
             rows_++;
-            auto conds = scan_conds();
-            if (eval_conds(cols_, conds, &visible_records_[cursor_].second)) {
+            if (eval_conds(cols_, current_scan_conds_, &visible_records_[cursor_].second)) {
                 return;
             }
             cursor_++;
@@ -223,7 +224,7 @@ class IndexScanExecutor : public AbstractExecutor {
         return cond;
     }
 
-    bool needs_snapshot_safe_scan() const {
+    bool needs_snapshot_visible_scan() const {
         if (context_->txn_mgr_ == nullptr || context_->txn_ == nullptr || !context_->txn_->get_txn_mode()) {
             return false;
         }
@@ -256,25 +257,34 @@ class IndexScanExecutor : public AbstractExecutor {
     void beginTuple() override {
         visible_records_.clear();
         cursor_ = 0;
-        if (needs_snapshot_safe_scan()) {
-            visible_records_ = context_->txn_mgr_->get_visible_records(tab_name_, fh_, context_);
-        } else {
-            Iid lower;
-            Iid upper;
-            build_index_range(lower, upper);
-            for (IxScan scan(ih_, lower, upper, sm_manager_->get_bpm()); !scan.is_end(); scan.next()) {
-                Rid candidate = scan.rid();
-                std::unique_ptr<RmRecord> rec =
-                    context_->txn_mgr_ == nullptr
-                        ? fh_->get_record(candidate, context_)
-                        : context_->txn_mgr_->get_visible_record(tab_name_, candidate, fh_, context_);
-                if (rec != nullptr) {
-                    visible_records_.emplace_back(candidate, *rec);
+        current_scan_conds_ = scan_conds();
+        std::unordered_set<Rid> seen;
+        Iid lower;
+        Iid upper;
+        build_index_range(lower, upper);
+        for (IxScan scan(ih_, lower, upper, sm_manager_->get_bpm()); !scan.is_end(); scan.next()) {
+            Rid candidate = scan.rid();
+            if (!seen.insert(candidate).second) {
+                continue;
+            }
+            std::unique_ptr<RmRecord> rec =
+                context_->txn_mgr_ == nullptr
+                    ? fh_->get_record(candidate, context_)
+                    : context_->txn_mgr_->get_visible_record(tab_name_, candidate, fh_, context_);
+            if (rec != nullptr) {
+                visible_records_.emplace_back(candidate, *rec);
+            }
+        }
+        if (needs_snapshot_visible_scan()) {
+            auto version_records = context_->txn_mgr_->get_visible_version_records(tab_name_, context_);
+            for (auto &entry : version_records) {
+                if (seen.insert(entry.first).second) {
+                    visible_records_.push_back(std::move(entry));
                 }
             }
         }
         if (context_->is_select_ && context_->txn_mgr_ != nullptr) {
-            context_->txn_mgr_->record_select_predicate(tab_name_, scan_conds(), context_->txn_);
+            context_->txn_mgr_->record_select_predicate(tab_name_, current_scan_conds_, context_->txn_);
         }
         advance_to_valid();
     }
@@ -330,6 +340,7 @@ class IndexScanExecutor : public AbstractExecutor {
             auto outer_meta = get_col(outer_cols, outer_col);
             outer_key_conds_.push_back(make_value_cond(inner_col, *outer_meta, outer_rec));
         }
+        current_scan_conds_ = scan_conds();
     }
 
     std::string explain(int depth = 0) const override {

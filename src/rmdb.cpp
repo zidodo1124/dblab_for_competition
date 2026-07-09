@@ -19,12 +19,10 @@ See the Mulan PSL v2 for more details. */
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
-#include <iostream>
 #include <map>
 #include <optional>
 #include <set>
 #include <sstream>
-#include <stdexcept>
 #include <vector>
 
 #include "errors.h"
@@ -34,6 +32,7 @@ See the Mulan PSL v2 for more details. */
 #include "optimizer/planner.h"
 #include "portal.h"
 #include "analyze/analyze.h"
+#include "common/config.h"
 
 #define SOCK_PORT 8765
 #define MAX_CONN_LIMIT 8
@@ -60,186 +59,9 @@ pthread_mutex_t *sockfd_mutex;
 
 static jmp_buf jmpbuf;
 
-std::string trim_copy(const std::string &s) {
-    auto begin = std::find_if(s.begin(), s.end(), [](unsigned char ch) {
-        return !std::isspace(ch);
-    });
-    auto end = std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
-        return !std::isspace(ch);
-    }).base();
-    if (begin >= end) {
-        return "";
-    }
-    return std::string(begin, end);
-}
-
-std::string lower_copy(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return s;
-}
-
-bool parse_output_file_command(const std::string &sql, bool *enabled) {
-    std::string normalized = trim_copy(sql);
-    if (!normalized.empty() && normalized.back() == ';') {
-        normalized.pop_back();
-    }
-    std::istringstream iss(normalized);
-    std::string set_kw;
-    std::string output_kw;
-    std::string value_kw;
-    std::string extra;
-    if (!(iss >> set_kw >> output_kw >> value_kw) || (iss >> extra)) {
-        return false;
-    }
-    if (lower_copy(set_kw) != "set" || lower_copy(output_kw) != "output_file") {
-        return false;
-    }
-    std::string value = lower_copy(value_kw);
-    if (value == "off" || value == "false" || value == "0") {
-        *enabled = false;
-        return true;
-    }
-    if (value == "on" || value == "true" || value == "1") {
-        *enabled = true;
-        return true;
-    }
-    return false;
-}
-
-std::optional<std::pair<std::string, std::string>> parse_load_sql(const std::string &sql) {
-    std::string normalized = trim_copy(sql);
-    if (!normalized.empty() && normalized.back() == ';') {
-        normalized.pop_back();
-    }
-    std::istringstream iss(normalized);
-    std::string load_kw;
-    std::string file_name;
-    std::string into_kw;
-    std::string table_name;
-    std::string extra;
-    if (!(iss >> load_kw >> file_name >> into_kw >> table_name) || (iss >> extra)) {
-        return std::nullopt;
-    }
-    if (lower_copy(load_kw) != "load" || lower_copy(into_kw) != "into") {
-        return std::nullopt;
-    }
-    return std::make_pair(file_name, table_name);
-}
-
-std::vector<std::string> parse_csv_line(const std::string &line) {
-    std::vector<std::string> fields;
-    std::string cur;
-    bool in_quote = false;
-    char quote_char = '\0';
-    for (size_t i = 0; i < line.size(); ++i) {
-        char ch = line[i];
-        if (in_quote) {
-            if (ch == quote_char) {
-                if (i + 1 < line.size() && line[i + 1] == quote_char) {
-                    cur.push_back(ch);
-                    ++i;
-                } else {
-                    in_quote = false;
-                }
-            } else {
-                cur.push_back(ch);
-            }
-        } else if ((ch == '\'' || ch == '"') && trim_copy(cur).empty()) {
-            in_quote = true;
-            quote_char = ch;
-        } else if (ch == ',') {
-            fields.push_back(trim_copy(cur));
-            cur.clear();
-        } else {
-            cur.push_back(ch);
-        }
-    }
-    fields.push_back(trim_copy(cur));
-    return fields;
-}
-
-std::vector<char> make_index_key_from_record(const RmRecord &rec, const IndexMeta &index) {
-    std::vector<char> key(index.col_tot_len);
-    int offset = 0;
-    for (int i = 0; i < index.col_num; ++i) {
-        memcpy(key.data() + offset, rec.data + index.cols[i].offset, index.cols[i].len);
-        offset += index.cols[i].len;
-    }
-    return key;
-}
-
-void load_csv_into_table(const std::string &file_name, const std::string &table_name, Context *context) {
-    TabMeta &tab = sm_manager->db_.get_table(table_name);
-    RmFileHandle *fh = sm_manager->fhs_.at(table_name).get();
-    std::ifstream input(file_name);
-    if (!input.is_open()) {
-        throw UnixError();
-    }
-
-    auto write_guard = txn_manager->acquire_write_latch();
-    std::string line;
-    while (std::getline(input, line)) {
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
-        }
-        if (line.empty()) {
-            continue;
-        }
-        std::vector<std::string> fields = parse_csv_line(line);
-        if (fields.size() != tab.cols.size()) {
-            throw InvalidValueCountError();
-        }
-
-        RmRecord rec(fh->get_file_hdr().record_size);
-        for (size_t i = 0; i < tab.cols.size(); ++i) {
-            const auto &col = tab.cols[i];
-            const std::string &field = fields[i];
-            char *dest = rec.data + col.offset;
-            if (col.type == TYPE_INT) {
-                int value = std::stoi(field);
-                memcpy(dest, &value, sizeof(int));
-            } else if (col.type == TYPE_FLOAT) {
-                float value = std::stof(field);
-                memcpy(dest, &value, sizeof(float));
-            } else {
-                std::string value = field;
-                if (value.size() > static_cast<size_t>(col.len)) {
-                    throw StringOverflowError();
-                }
-                memset(dest, 0, col.len);
-                memcpy(dest, value.data(), value.size());
-            }
-        }
-
-        std::vector<std::vector<char>> keys;
-        keys.reserve(tab.indexes.size());
-        for (auto &index : tab.indexes) {
-            auto ih = sm_manager->ihs_.at(sm_manager->get_ix_manager()->get_index_name(table_name, index.cols)).get();
-            auto key = make_index_key_from_record(rec, index);
-            std::vector<Rid> existing;
-            if (ih->get_value(key.data(), &existing, context == nullptr ? nullptr : context->txn_)) {
-                throw UniqueConstraintViolationError(table_name);
-            }
-            keys.push_back(std::move(key));
-        }
-
-        Rid rid = fh->insert_record(rec.data, nullptr);
-        for (size_t i = 0; i < tab.indexes.size(); ++i) {
-            auto &index = tab.indexes[i];
-            auto ih = sm_manager->ihs_.at(sm_manager->get_ix_manager()->get_index_name(table_name, index.cols)).get();
-            ih->insert_entry(keys[i].data(), rid, context == nullptr ? nullptr : context->txn_);
-        }
-    }
-
-    fh->flush_file_hdr();
-    buffer_pool_manager->flush_dirty_pages(std::vector<int>{fh->GetFd()}, false);
-    for (auto &index : tab.indexes) {
-        auto ih = sm_manager->ihs_.at(sm_manager->get_ix_manager()->get_index_name(table_name, index.cols)).get();
-        ih->flush_file_hdr();
-        buffer_pool_manager->flush_dirty_pages(std::vector<int>{ih->get_fd()}, false);
-    }
+bool rmdb_verbose_logging() {
+    const char *verbose = std::getenv("RMDB_VERBOSE");
+    return verbose != nullptr && std::string(verbose) == "1";
 }
 
 std::optional<std::string> parse_show_index_sql(const std::string &sql) {
@@ -281,6 +103,52 @@ std::optional<std::string> parse_show_index_sql(const std::string &sql) {
     return std::nullopt;
 }
 
+std::optional<std::pair<std::string, std::string>> parse_load_sql(const std::string &sql) {
+    std::string normalized = sql;
+    for (char &ch : normalized) {
+        if (ch == ';') {
+            ch = ' ';
+        }
+    }
+    std::istringstream iss(normalized);
+    std::string load;
+    std::string file_name;
+    std::string into;
+    std::string tab_name;
+    std::string extra;
+    if (!(iss >> load >> file_name >> into >> tab_name) || (iss >> extra)) {
+        return std::nullopt;
+    }
+    auto lower = [](std::string s) {
+        for (char &ch : s) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        return s;
+    };
+    auto valid_identifier = [](const std::string &s) {
+        if (s.empty() || !(std::isalpha(static_cast<unsigned char>(s[0])) || s[0] == '_')) {
+            return false;
+        }
+        for (char ch : s) {
+            if (ch != '_' && !std::isalnum(static_cast<unsigned char>(ch))) {
+                return false;
+            }
+        }
+        return true;
+    };
+    auto strip_quotes = [](std::string s) {
+        if (s.size() >= 2 && ((s.front() == '\'' && s.back() == '\'') ||
+                              (s.front() == '"' && s.back() == '"'))) {
+            return s.substr(1, s.size() - 2);
+        }
+        return s;
+    };
+    if (lower(load) != "load" || lower(into) != "into" || !valid_identifier(tab_name)) {
+        return std::nullopt;
+    }
+    return std::make_pair(strip_quotes(file_name), tab_name);
+}
+
 bool should_report_parse_failure(const char *sql) {
     std::string s = sql == nullptr ? "" : sql;
     auto begin = std::find_if(s.begin(), s.end(), [](unsigned char ch) {
@@ -291,6 +159,46 @@ bool should_report_parse_failure(const char *sql) {
     }
     std::string trimmed(begin, s.end());
     return trimmed.rfind("--", 0) != 0;
+}
+
+std::string normalized_command(const char *sql) {
+    std::string s = sql == nullptr ? "" : sql;
+    for (char &ch : s) {
+        if (ch == ';') {
+            ch = ' ';
+        } else {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+    }
+    std::istringstream iss(s);
+    std::ostringstream os;
+    std::string word;
+    bool first = true;
+    while (iss >> word) {
+        if (!first) {
+            os << ' ';
+        }
+        os << word;
+        first = false;
+    }
+    return os.str();
+}
+
+bool handle_fast_utility_command(const char *sql, char *data_send, int &offset) {
+    std::string command = normalized_command(sql);
+    if (command == "set output_file off") {
+        output_file_enabled.store(false, std::memory_order_relaxed);
+        data_send[0] = '\0';
+        offset = 0;
+        return true;
+    }
+    if (command == "set output_file on") {
+        output_file_enabled.store(true, std::memory_order_relaxed);
+        data_send[0] = '\0';
+        offset = 0;
+        return true;
+    }
+    return false;
 }
 
 void sigint_handler(int signo) {
@@ -329,7 +237,7 @@ void execute_parse_tree(std::shared_ptr<ast::TreeNode> parse_tree, char *data_se
         txn_manager->abort(context->txn_, log_manager.get());
         std::cout << e.GetInfo() << std::endl;
 
-        if (output_file_enabled()) {
+        if (output_file_enabled.load(std::memory_order_relaxed)) {
             std::fstream outfile;
             outfile.open("output.txt", std::ios::out | std::ios::app);
             outfile << str;
@@ -343,7 +251,7 @@ void execute_parse_tree(std::shared_ptr<ast::TreeNode> parse_tree, char *data_se
         data_send[e.get_msg_len() + 1] = '\0';
         offset = e.get_msg_len() + 1;
 
-        if (output_file_enabled()) {
+        if (output_file_enabled.load(std::memory_order_relaxed)) {
             std::fstream outfile;
             outfile.open("output.txt",std::ios::out | std::ios::app);
             outfile << "failure\n";
@@ -367,11 +275,16 @@ void *client_handler(void *sock_fd) {
     txn_id_t txn_id = INVALID_TXN_ID;
     IsolationLevel session_isolation = IsolationLevel::SERIALIZABLE;
 
-    std::string output = "establish client connection, sockfd: " + std::to_string(fd) + "\n";
-    std::cout << output;
+    bool verbose = rmdb_verbose_logging();
+    if (verbose) {
+        std::string output = "establish client connection, sockfd: " + std::to_string(fd) + "\n";
+        std::cout << output;
+    }
 
     while (true) {
-        std::cout << "Waiting for request..." << std::endl;
+        if (verbose) {
+            std::cout << "Waiting for request..." << std::endl;
+        }
         memset(data_recv, 0, BUFFER_LENGTH);
 
         i_recvBytes = read(fd, data_recv, BUFFER_LENGTH);
@@ -385,7 +298,9 @@ void *client_handler(void *sock_fd) {
             break;
         }
         
-        printf("i_recvBytes: %d \n ", i_recvBytes);
+        if (verbose) {
+            printf("i_recvBytes: %d \n ", i_recvBytes);
+        }
 
         if (strcmp(data_recv, "exit") == 0) {
             std::cout << "Client exit." << std::endl;
@@ -396,75 +311,47 @@ void *client_handler(void *sock_fd) {
             exit(1);
         }
 
-        std::cout << "Read from client " << fd << ": " << data_recv << std::endl;
+        if (verbose) {
+            std::cout << "Read from client " << fd << ": " << data_recv << std::endl;
+        }
 
         memset(data_send, '\0', BUFFER_LENGTH);
         offset = 0;
+
+        if (handle_fast_utility_command(data_recv, data_send, offset)) {
+            if (write(fd, data_send, offset + 1) == -1) {
+                break;
+            }
+            continue;
+        }
 
         // 开启事务，初始化系统所需的上下文信息（包括事务对象指针、锁管理器指针、日志管理器指针、存放结果的buffer、记录结果长度的变量）
         Context *context = new Context(lock_manager.get(), log_manager.get(), nullptr, data_send, &offset,
                                        txn_manager.get(), &session_isolation);
         SetTransaction(&txn_id, context, session_isolation);
 
-        bool output_file_on = true;
-        if (parse_output_file_command(data_recv, &output_file_on)) {
-            set_output_file_enabled(output_file_on);
-            if(context->txn_->get_txn_mode() == false &&
-               context->txn_->get_state() != TransactionState::COMMITTED &&
-               context->txn_->get_state() != TransactionState::ABORTED)
-            {
-                txn_manager->commit(context->txn_, context->log_mgr_);
-            }
-            if (write(fd, data_send, offset + 1) == -1) {
-                break;
-            }
-            continue;
-        }
-
-        if (auto load_stmt = parse_load_sql(data_recv)) {
-            try {
-                load_csv_into_table(load_stmt->first, load_stmt->second, context);
-            } catch (RMDBError &e) {
-                std::cerr << e.what() << std::endl;
-                std::string str = "failure\n";
-                memcpy(data_send, str.c_str(), str.length());
-                data_send[str.length()] = '\0';
-                offset = str.length();
-                if (output_file_enabled()) {
-                    std::fstream outfile;
-                    outfile.open("output.txt", std::ios::out | std::ios::app);
-                    outfile << str;
-                    outfile.close();
-                }
-            } catch (std::exception &e) {
-                std::cerr << e.what() << std::endl;
-                std::string str = "failure\n";
-                memcpy(data_send, str.c_str(), str.length());
-                data_send[str.length()] = '\0';
-                offset = str.length();
-                if (output_file_enabled()) {
-                    std::fstream outfile;
-                    outfile.open("output.txt", std::ios::out | std::ios::app);
-                    outfile << str;
-                    outfile.close();
-                }
-            }
-            if(context->txn_->get_txn_mode() == false &&
-               context->txn_->get_state() != TransactionState::COMMITTED &&
-               context->txn_->get_state() != TransactionState::ABORTED)
-            {
-                txn_manager->commit(context->txn_, context->log_mgr_);
-            }
-            if (write(fd, data_send, offset + 1) == -1) {
-                break;
-            }
-            continue;
-        }
-
         // 用于判断是否已经调用了yy_delete_buffer来删除buf
         bool finish_analyze = false;
+        auto load_command = parse_load_sql(data_recv);
         auto show_index_table = parse_show_index_sql(data_recv);
-        if (show_index_table.has_value()) {
+        if (load_command.has_value()) {
+            finish_analyze = true;
+            try {
+                sm_manager->load_table(load_command->first, load_command->second, context);
+            } catch (RMDBError &e) {
+                std::cerr << e.what() << std::endl;
+                memcpy(data_send, e.what(), e.get_msg_len());
+                data_send[e.get_msg_len()] = '\n';
+                data_send[e.get_msg_len() + 1] = '\0';
+                offset = e.get_msg_len() + 1;
+                if (output_file_enabled.load(std::memory_order_relaxed)) {
+                    std::fstream outfile;
+                    outfile.open("output.txt", std::ios::out | std::ios::app);
+                    outfile << "failure\n";
+                    outfile.close();
+                }
+            }
+        } else if (show_index_table.has_value()) {
             auto parse_tree = std::make_shared<ast::ShowIndex>(*show_index_table);
             finish_analyze = true;
             execute_parse_tree(std::move(parse_tree), data_send, offset, &txn_id, context);
@@ -491,7 +378,7 @@ void *client_handler(void *sock_fd) {
                     memcpy(data_send, str.c_str(), str.length());
                     data_send[str.length()] = '\0';
                     offset = str.length();
-                    if (output_file_enabled()) {
+                    if (output_file_enabled.load(std::memory_order_relaxed)) {
                         std::fstream outfile;
                         outfile.open("output.txt", std::ios::out | std::ios::app);
                         outfile << str;
@@ -515,7 +402,9 @@ void *client_handler(void *sock_fd) {
     }
 
     // Clear
-    std::cout << "Terminating current client_connection..." << std::endl;
+    if (verbose) {
+        std::cout << "Terminating current client_connection..." << std::endl;
+    }
     close(fd);           // close a file descriptor.
     pthread_exit(NULL);  // terminate calling thread!
 }
@@ -562,7 +451,9 @@ void start_server() {
     }
 
     while (!should_exit) {
-        std::cout << "Waiting for new connection..." << std::endl;
+        if (rmdb_verbose_logging()) {
+            std::cout << "Waiting for new connection..." << std::endl;
+        }
         pthread_t thread_id;
         struct sockaddr_in s_addr_client {};
         int client_length = sizeof(s_addr_client);

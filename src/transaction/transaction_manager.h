@@ -80,6 +80,7 @@ public:
 
     std::vector<std::pair<Rid, RmRecord>> get_visible_records(const std::string &tab_name, RmFileHandle *fh,
                                                                Context *context);
+    std::vector<std::pair<Rid, RmRecord>> get_visible_version_records(const std::string &tab_name, Context *context);
     std::unique_ptr<RmRecord> get_visible_record(const std::string &tab_name, const Rid &rid, RmFileHandle *fh,
                                                   Context *context);
     void check_write_conflict(const std::string &tab_name, const Rid &rid, Transaction *txn);

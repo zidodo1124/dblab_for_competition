@@ -400,6 +400,24 @@ std::vector<std::pair<Rid, RmRecord>> TransactionManager::get_visible_records(co
     return result;
 }
 
+std::vector<std::pair<Rid, RmRecord>> TransactionManager::get_visible_version_records(const std::string &tab_name,
+                                                                                       Context *context) {
+    std::lock_guard<std::mutex> lock(mvcc_latch_);
+    const std::string prefix = tab_name + "#";
+    std::vector<std::pair<Rid, RmRecord>> result;
+    for (auto &entry : versions_) {
+        if (entry.first.rfind(prefix, 0) != 0 || entry.second.empty()) {
+            continue;
+        }
+        const Rid rid = entry.second.front().rid;
+        Version *visible = visible_version(tab_name, rid, context->txn_);
+        if (visible != nullptr && !visible->deleted) {
+            result.emplace_back(rid, visible->record);
+        }
+    }
+    return result;
+}
+
 std::unique_ptr<RmRecord> TransactionManager::get_visible_record(const std::string &tab_name, const Rid &rid,
                                                                   RmFileHandle *fh, Context *context) {
     std::lock_guard<std::mutex> lock(mvcc_latch_);

@@ -101,11 +101,8 @@ class AggregateExecutor : public AbstractExecutor {
         if (type == TYPE_FLOAT) {
             return sizeof(float);
         }
-        if (type == TYPE_STRING) {
-            auto col = prev_->get_col_offset(call.col);
-            return col.len;
-        }
-        return 0;
+        auto col = prev_->get_col_offset(call.col);
+        return col.len;
     }
 
     void build_output_cols() {
@@ -147,26 +144,20 @@ class AggregateExecutor : public AbstractExecutor {
             return;
         }
         auto col = prev_->get_col_offset(call.col);
-        if (col.type == TYPE_STRING) {
-            if (call.type != AGG_MAX && call.type != AGG_MIN) {
-                return;
-            }
-            std::string val(rec->data + col.offset, col.len);
-            val.resize(strlen(val.c_str()));
-            if (!state.has_value ||
-                (call.type == AGG_MAX && val > state.str_val) ||
-                (call.type == AGG_MIN && val < state.str_val)) {
-                state.has_value = true;
-                state.str_val = std::move(val);
-            }
-            return;
-        }
-
         double val = 0;
         if (col.type == TYPE_INT) {
             val = *reinterpret_cast<const int *>(rec->data + col.offset);
         } else if (col.type == TYPE_FLOAT) {
             val = *reinterpret_cast<const float *>(rec->data + col.offset);
+        } else if (call.type == AGG_MAX || call.type == AGG_MIN) {
+            std::string str(rec->data + col.offset, col.len);
+            str.resize(strlen(str.c_str()));
+            if (!state.has_value || (call.type == AGG_MAX && str > state.str_val) ||
+                (call.type == AGG_MIN && str < state.str_val)) {
+                state.has_value = true;
+                state.str_val = std::move(str);
+            }
+            return;
         }
 
         if (call.type == AGG_SUM || call.type == AGG_AVG) {
@@ -291,13 +282,15 @@ class AggregateExecutor : public AbstractExecutor {
         return true;
     }
 
-    void write_term(char *dest, const ColMeta &col, const TermValue &val) const {
-        ColType type = col.type;
+    void write_term(char *dest, const ColMeta &out_col, const TermValue &val) const {
+        ColType type = out_col.type;
         if (val.is_null) {
             if (type == TYPE_INT) {
                 *reinterpret_cast<int *>(dest) = std::numeric_limits<int>::min();
             } else if (type == TYPE_FLOAT) {
                 *reinterpret_cast<float *>(dest) = std::numeric_limits<float>::quiet_NaN();
+            } else {
+                memset(dest, 0, out_col.len);
             }
             return;
         }
@@ -307,9 +300,9 @@ class AggregateExecutor : public AbstractExecutor {
         } else if (type == TYPE_FLOAT) {
             float out = val.type == TYPE_FLOAT ? val.float_val : static_cast<float>(val.int_val);
             *reinterpret_cast<float *>(dest) = out;
-        } else if (type == TYPE_STRING) {
-            memset(dest, 0, col.len);
-            memcpy(dest, val.str_val.data(), std::min(static_cast<size_t>(col.len), val.str_val.size()));
+        } else {
+            memset(dest, 0, out_col.len);
+            memcpy(dest, val.str_val.data(), std::min<int>(out_col.len, val.str_val.size()));
         }
     }
 
@@ -370,7 +363,7 @@ class AggregateExecutor : public AbstractExecutor {
             return false;
         }
         for (const auto &item : select_items_) {
-            if (!item.is_agg || item.agg.type != AGG_COUNT) {
+            if (!item.is_agg) {
                 return false;
             }
         }
@@ -488,6 +481,18 @@ class AggregateExecutor : public AbstractExecutor {
                 return "NULL";
             }
             return std::to_string(val);
+        }
+        if (col.type == TYPE_STRING) {
+            bool all_zero = true;
+            for (int i = 0; i < col.len; ++i) {
+                if (rec_buf[i] != '\0') {
+                    all_zero = false;
+                    break;
+                }
+            }
+            if (all_zero) {
+                return "NULL";
+            }
         }
         return AbstractExecutor::format_record_value(col, rec_buf);
     }

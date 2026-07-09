@@ -104,7 +104,7 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
                     auto col_meta = std::find_if(all_cols.begin(), all_cols.end(), [&](const ColMeta &col) {
                         return col.tab_name == item.agg.col.tab_name && col.name == item.agg.col.col_name;
                     });
-                    if (item.agg.type != AGG_COUNT && col_meta->type == TYPE_STRING) {
+                    if ((item.agg.type == AGG_SUM || item.agg.type == AGG_AVG) && col_meta->type == TYPE_STRING) {
                         throw IncompatibleTypeError("NUMERIC", "STRING");
                     }
                 }
@@ -161,7 +161,7 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
                     auto col_meta = std::find_if(all_cols.begin(), all_cols.end(), [&](const ColMeta &col) {
                         return col.tab_name == term.agg.col.tab_name && col.name == term.agg.col.col_name;
                     });
-                    if (term.agg.type != AGG_COUNT && col_meta->type == TYPE_STRING) {
+                    if ((term.agg.type == AGG_SUM || term.agg.type == AGG_AVG) && col_meta->type == TYPE_STRING) {
                         throw IncompatibleTypeError("NUMERIC", "STRING");
                     }
                 }

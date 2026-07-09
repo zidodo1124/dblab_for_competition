@@ -24,6 +24,7 @@ class AggregateExecutor : public AbstractExecutor {
         bool has_value = false;
         int int_val = 0;
         float float_val = 0;
+        std::string str_val;
     };
 
     struct GroupState {
@@ -93,14 +94,15 @@ class AggregateExecutor : public AbstractExecutor {
         return col.type;
     }
 
-    int agg_output_len(ColType type) const {
+    int agg_output_len(const AggCall &call, ColType type) const {
         if (type == TYPE_INT) {
             return sizeof(int);
         }
         if (type == TYPE_FLOAT) {
             return sizeof(float);
         }
-        return 0;
+        auto col = prev_->get_col_offset(call.col);
+        return col.len;
     }
 
     void build_output_cols() {
@@ -114,7 +116,7 @@ class AggregateExecutor : public AbstractExecutor {
             if (item.is_agg) {
                 ColType type = agg_output_type(item.agg);
                 col.type = type;
-                col.len = agg_output_len(type);
+                col.len = agg_output_len(item.agg, type);
             } else {
                 auto src_col = prev_->get_col_offset(item.col);
                 col.type = src_col.type;
@@ -147,6 +149,15 @@ class AggregateExecutor : public AbstractExecutor {
             val = *reinterpret_cast<const int *>(rec->data + col.offset);
         } else if (col.type == TYPE_FLOAT) {
             val = *reinterpret_cast<const float *>(rec->data + col.offset);
+        } else if (call.type == AGG_MAX || call.type == AGG_MIN) {
+            std::string str(rec->data + col.offset, col.len);
+            str.resize(strlen(str.c_str()));
+            if (!state.has_value || (call.type == AGG_MAX && str > state.str_val) ||
+                (call.type == AGG_MIN && str < state.str_val)) {
+                state.has_value = true;
+                state.str_val = std::move(str);
+            }
+            return;
         }
 
         if (call.type == AGG_SUM || call.type == AGG_AVG) {
@@ -196,8 +207,10 @@ class AggregateExecutor : public AbstractExecutor {
             }
             if (type == TYPE_INT) {
                 val.int_val = state.int_val;
-            } else {
+            } else if (type == TYPE_FLOAT) {
                 val.float_val = state.float_val;
+            } else {
+                val.str_val = state.str_val;
             }
         }
         return val;
@@ -269,12 +282,15 @@ class AggregateExecutor : public AbstractExecutor {
         return true;
     }
 
-    void write_term(char *dest, ColType type, const TermValue &val) const {
+    void write_term(char *dest, const ColMeta &out_col, const TermValue &val) const {
+        ColType type = out_col.type;
         if (val.is_null) {
             if (type == TYPE_INT) {
                 *reinterpret_cast<int *>(dest) = std::numeric_limits<int>::min();
             } else if (type == TYPE_FLOAT) {
                 *reinterpret_cast<float *>(dest) = std::numeric_limits<float>::quiet_NaN();
+            } else {
+                memset(dest, 0, out_col.len);
             }
             return;
         }
@@ -284,6 +300,9 @@ class AggregateExecutor : public AbstractExecutor {
         } else if (type == TYPE_FLOAT) {
             float out = val.type == TYPE_FLOAT ? val.float_val : static_cast<float>(val.int_val);
             *reinterpret_cast<float *>(dest) = out;
+        } else {
+            memset(dest, 0, out_col.len);
+            memcpy(dest, val.str_val.data(), std::min<int>(out_col.len, val.str_val.size()));
         }
     }
 
@@ -295,7 +314,7 @@ class AggregateExecutor : public AbstractExecutor {
             char *dest = rec->data + out_col.offset;
             if (item.is_agg) {
                 int idx = agg_index(item.agg);
-                write_term(dest, out_col.type, agg_value(item.agg, group.aggs[idx]));
+                write_term(dest, out_col, agg_value(item.agg, group.aggs[idx]));
             } else {
                 auto src_col = prev_->get_col_offset(item.col);
                 memcpy(dest, group.sample->data + src_col.offset, src_col.len);
@@ -344,7 +363,7 @@ class AggregateExecutor : public AbstractExecutor {
             return false;
         }
         for (const auto &item : select_items_) {
-            if (!item.is_agg || item.agg.type != AGG_COUNT) {
+            if (!item.is_agg) {
                 return false;
             }
         }
@@ -462,6 +481,18 @@ class AggregateExecutor : public AbstractExecutor {
                 return "NULL";
             }
             return std::to_string(val);
+        }
+        if (col.type == TYPE_STRING) {
+            bool all_zero = true;
+            for (int i = 0; i < col.len; ++i) {
+                if (rec_buf[i] != '\0') {
+                    all_zero = false;
+                    break;
+                }
+            }
+            if (all_zero) {
+                return "NULL";
+            }
         }
         return AbstractExecutor::format_record_value(col, rec_buf);
     }

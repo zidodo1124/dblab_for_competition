@@ -32,6 +32,7 @@ See the Mulan PSL v2 for more details. */
 #include "optimizer/planner.h"
 #include "portal.h"
 #include "analyze/analyze.h"
+#include "common/config.h"
 
 #define SOCK_PORT 8765
 #define MAX_CONN_LIMIT 8
@@ -57,6 +58,11 @@ pthread_mutex_t *buffer_mutex;
 pthread_mutex_t *sockfd_mutex;
 
 static jmp_buf jmpbuf;
+
+bool rmdb_verbose_logging() {
+    const char *verbose = std::getenv("RMDB_VERBOSE");
+    return verbose != nullptr && std::string(verbose) == "1";
+}
 
 std::optional<std::string> parse_show_index_sql(const std::string &sql) {
     std::string normalized = sql;
@@ -109,6 +115,46 @@ bool should_report_parse_failure(const char *sql) {
     return trimmed.rfind("--", 0) != 0;
 }
 
+std::string normalized_command(const char *sql) {
+    std::string s = sql == nullptr ? "" : sql;
+    for (char &ch : s) {
+        if (ch == ';') {
+            ch = ' ';
+        } else {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+    }
+    std::istringstream iss(s);
+    std::ostringstream os;
+    std::string word;
+    bool first = true;
+    while (iss >> word) {
+        if (!first) {
+            os << ' ';
+        }
+        os << word;
+        first = false;
+    }
+    return os.str();
+}
+
+bool handle_fast_utility_command(const char *sql, char *data_send, int &offset) {
+    std::string command = normalized_command(sql);
+    if (command == "set output_file off") {
+        output_file_enabled.store(false, std::memory_order_relaxed);
+        data_send[0] = '\0';
+        offset = 0;
+        return true;
+    }
+    if (command == "set output_file on") {
+        output_file_enabled.store(true, std::memory_order_relaxed);
+        data_send[0] = '\0';
+        offset = 0;
+        return true;
+    }
+    return false;
+}
+
 void sigint_handler(int signo) {
     should_exit = true;
     log_manager->flush_log_to_disk();
@@ -145,10 +191,12 @@ void execute_parse_tree(std::shared_ptr<ast::TreeNode> parse_tree, char *data_se
         txn_manager->abort(context->txn_, log_manager.get());
         std::cout << e.GetInfo() << std::endl;
 
-        std::fstream outfile;
-        outfile.open("output.txt", std::ios::out | std::ios::app);
-        outfile << str;
-        outfile.close();
+        if (output_file_enabled.load(std::memory_order_relaxed)) {
+            std::fstream outfile;
+            outfile.open("output.txt", std::ios::out | std::ios::app);
+            outfile << str;
+            outfile.close();
+        }
     } catch (RMDBError &e) {
         std::cerr << e.what() << std::endl;
 
@@ -157,10 +205,12 @@ void execute_parse_tree(std::shared_ptr<ast::TreeNode> parse_tree, char *data_se
         data_send[e.get_msg_len() + 1] = '\0';
         offset = e.get_msg_len() + 1;
 
-        std::fstream outfile;
-        outfile.open("output.txt",std::ios::out | std::ios::app);
-        outfile << "failure\n";
-        outfile.close();
+        if (output_file_enabled.load(std::memory_order_relaxed)) {
+            std::fstream outfile;
+            outfile.open("output.txt",std::ios::out | std::ios::app);
+            outfile << "failure\n";
+            outfile.close();
+        }
     }
 }
 
@@ -179,11 +229,16 @@ void *client_handler(void *sock_fd) {
     txn_id_t txn_id = INVALID_TXN_ID;
     IsolationLevel session_isolation = IsolationLevel::SERIALIZABLE;
 
-    std::string output = "establish client connection, sockfd: " + std::to_string(fd) + "\n";
-    std::cout << output;
+    bool verbose = rmdb_verbose_logging();
+    if (verbose) {
+        std::string output = "establish client connection, sockfd: " + std::to_string(fd) + "\n";
+        std::cout << output;
+    }
 
     while (true) {
-        std::cout << "Waiting for request..." << std::endl;
+        if (verbose) {
+            std::cout << "Waiting for request..." << std::endl;
+        }
         memset(data_recv, 0, BUFFER_LENGTH);
 
         i_recvBytes = read(fd, data_recv, BUFFER_LENGTH);
@@ -197,7 +252,9 @@ void *client_handler(void *sock_fd) {
             break;
         }
         
-        printf("i_recvBytes: %d \n ", i_recvBytes);
+        if (verbose) {
+            printf("i_recvBytes: %d \n ", i_recvBytes);
+        }
 
         if (strcmp(data_recv, "exit") == 0) {
             std::cout << "Client exit." << std::endl;
@@ -208,10 +265,19 @@ void *client_handler(void *sock_fd) {
             exit(1);
         }
 
-        std::cout << "Read from client " << fd << ": " << data_recv << std::endl;
+        if (verbose) {
+            std::cout << "Read from client " << fd << ": " << data_recv << std::endl;
+        }
 
         memset(data_send, '\0', BUFFER_LENGTH);
         offset = 0;
+
+        if (handle_fast_utility_command(data_recv, data_send, offset)) {
+            if (write(fd, data_send, offset + 1) == -1) {
+                break;
+            }
+            continue;
+        }
 
         // 开启事务，初始化系统所需的上下文信息（包括事务对象指针、锁管理器指针、日志管理器指针、存放结果的buffer、记录结果长度的变量）
         Context *context = new Context(lock_manager.get(), log_manager.get(), nullptr, data_send, &offset,
@@ -248,10 +314,12 @@ void *client_handler(void *sock_fd) {
                     memcpy(data_send, str.c_str(), str.length());
                     data_send[str.length()] = '\0';
                     offset = str.length();
-                    std::fstream outfile;
-                    outfile.open("output.txt", std::ios::out | std::ios::app);
-                    outfile << str;
-                    outfile.close();
+                    if (output_file_enabled.load(std::memory_order_relaxed)) {
+                        std::fstream outfile;
+                        outfile.open("output.txt", std::ios::out | std::ios::app);
+                        outfile << str;
+                        outfile.close();
+                    }
                 }
             }
         }
@@ -270,7 +338,9 @@ void *client_handler(void *sock_fd) {
     }
 
     // Clear
-    std::cout << "Terminating current client_connection..." << std::endl;
+    if (verbose) {
+        std::cout << "Terminating current client_connection..." << std::endl;
+    }
     close(fd);           // close a file descriptor.
     pthread_exit(NULL);  // terminate calling thread!
 }
@@ -317,7 +387,9 @@ void start_server() {
     }
 
     while (!should_exit) {
-        std::cout << "Waiting for new connection..." << std::endl;
+        if (rmdb_verbose_logging()) {
+            std::cout << "Waiting for new connection..." << std::endl;
+        }
         pthread_t thread_id;
         struct sockaddr_in s_addr_client {};
         int client_length = sizeof(s_addr_client);

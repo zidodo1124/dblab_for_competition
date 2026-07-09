@@ -73,6 +73,11 @@ start:
         parse_tree = $1;
         YYACCEPT;
     }
+    |   stmt
+    {
+        parse_tree = $1;
+        YYACCEPT;
+    }
     |   HELP
     {
         parse_tree = std::make_shared<Help>();

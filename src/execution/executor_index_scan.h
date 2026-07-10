@@ -225,7 +225,7 @@ class IndexScanExecutor : public AbstractExecutor {
     }
 
     bool needs_snapshot_visible_scan() const {
-        if (context_->txn_mgr_ == nullptr || context_->txn_ == nullptr || !context_->txn_->get_txn_mode()) {
+        if (context_->txn_mgr_ == nullptr || context_->txn_ == nullptr) {
             return false;
         }
         auto isolation = context_->txn_->get_isolation_level();

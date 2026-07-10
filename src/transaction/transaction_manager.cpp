@@ -41,6 +41,16 @@ void clear_write_set(Transaction *txn) {
         write_set->pop_front();
     }
 }
+
+void release_delete_reservations(Transaction *txn, SmManager *sm_manager) {
+    for (WriteRecord *write_record : *txn->get_write_set()) {
+        if (write_record->GetWriteType() != WType::DELETE_TUPLE) {
+            continue;
+        }
+        auto fh = sm_manager->fhs_.at(write_record->GetTableName()).get();
+        fh->release_deleted_rid(write_record->GetRid());
+    }
+}
 }  // namespace
 
 /**
@@ -51,6 +61,7 @@ void clear_write_set(Transaction *txn) {
  */
 Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manager) {
     auto write_guard = acquire_write_latch();
+    (void)log_manager;
     if (txn == nullptr) {
         txn = new Transaction(next_txn_id_++);
     }
@@ -64,10 +75,6 @@ Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manage
         std::lock_guard<std::mutex> mvcc_lock(mvcc_latch_);
         ser_states_[txn->get_transaction_id()];
     }
-    if (log_manager != nullptr) {
-        BeginLogRecord log_record(txn->get_transaction_id());
-        log_manager->add_log_record(&log_record, txn);
-    }
     return txn;
 }
 
@@ -77,7 +84,7 @@ Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manage
  * @param {LogManager*} log_manager 日志管理器指针
  */
 void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
-    auto write_guard = acquire_write_latch();
+    auto operation_guard = acquire_operation_latch();
     if (txn == nullptr) {
         return;
     }
@@ -163,13 +170,14 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
             }
         }
     }
+    release_delete_reservations(txn, sm_manager_);
     clear_write_set(txn);
     auto lock_set = txn->get_lock_set();
     while (!lock_set->empty()) {
         auto lock_data_id = *lock_set->begin();
         lock_manager_->unlock(txn, lock_data_id);
     }
-    if (log_manager != nullptr) {
+    if (log_manager != nullptr && txn->get_first_write_lsn() != INVALID_LSN) {
         CommitLogRecord log_record(txn->get_transaction_id());
         log_manager->add_log_record(&log_record, txn);
         log_manager->flush_log_to_disk();
@@ -225,6 +233,7 @@ void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
                 auto key = make_index_key(old_rec, index);
                 ih->insert_entry(key.data(), rid, txn);
             }
+            fh->release_deleted_rid(rid);
         } else if (write_record->GetWriteType() == WType::UPDATE_TUPLE) {
             auto cur_rec = fh->get_record(rid, &rollback_context);
             for (auto &index : tab.indexes) {
@@ -248,7 +257,7 @@ void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
         auto lock_data_id = *lock_set->begin();
         lock_manager_->unlock(txn, lock_data_id);
     }
-    if (log_manager != nullptr) {
+    if (log_manager != nullptr && txn->get_first_write_lsn() != INVALID_LSN) {
         AbortLogRecord log_record(txn->get_transaction_id());
         log_manager->add_log_record(&log_record, txn);
         log_manager->flush_log_to_disk();
@@ -257,8 +266,8 @@ void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
     cleanup_abort(txn);
 }
 
-std::string TransactionManager::version_key(const std::string &tab_name, const Rid &rid) const {
-    return tab_name + "#" + std::to_string(rid.page_no) + "#" + std::to_string(rid.slot_no);
+TransactionManager::VersionKey TransactionManager::version_key(const std::string &tab_name, const Rid &rid) const {
+    return VersionKey{tab_name, rid};
 }
 
 int64_t TransactionManager::rid_key(const Rid &rid) const {
@@ -298,7 +307,7 @@ void TransactionManager::remember_no_index_write(const std::string &tab_name, co
 
 void TransactionManager::ensure_base_version(const std::string &tab_name, const Rid &rid, RmFileHandle *fh,
                                              Context *context) {
-    std::string key = version_key(tab_name, rid);
+    VersionKey key = version_key(tab_name, rid);
     if (versions_.find(key) != versions_.end()) {
         return;
     }
@@ -341,7 +350,12 @@ TransactionManager::Version *TransactionManager::visible_version(const std::stri
     if (it == versions_.end()) {
         return nullptr;
     }
-    for (auto rit = it->second.rbegin(); rit != it->second.rend(); ++rit) {
+    return visible_version(it->second, txn);
+}
+
+TransactionManager::Version *TransactionManager::visible_version(std::vector<Version> &versions,
+                                                                 Transaction *txn) {
+    for (auto rit = versions.rbegin(); rit != versions.rend(); ++rit) {
         if (version_visible(*rit, txn)) {
             return &(*rit);
         }
@@ -352,7 +366,6 @@ TransactionManager::Version *TransactionManager::visible_version(const std::stri
 std::vector<std::pair<Rid, RmRecord>> TransactionManager::get_visible_records(const std::string &tab_name,
                                                                                RmFileHandle *fh, Context *context) {
     std::lock_guard<std::mutex> lock(mvcc_latch_);
-    const std::string prefix = tab_name + "#";
     std::unordered_set<Rid> seen;
     std::vector<std::pair<Rid, RmRecord>> result;
     for (RmScan scan(fh); !scan.is_end(); scan.next()) {
@@ -360,7 +373,7 @@ std::vector<std::pair<Rid, RmRecord>> TransactionManager::get_visible_records(co
         seen.insert(rid);
         auto version_it = versions_.find(version_key(tab_name, rid));
         if (version_it != versions_.end()) {
-            Version *visible = visible_version(tab_name, rid, context->txn_);
+            Version *visible = visible_version(version_it->second, context->txn_);
             if (visible != nullptr && !visible->deleted) {
                 result.emplace_back(rid, visible->record);
             }
@@ -378,10 +391,10 @@ std::vector<std::pair<Rid, RmRecord>> TransactionManager::get_visible_records(co
             continue;
         }
         const Rid rid = list.front().rid;
-        if (seen.count(rid) > 0 || entry.first.rfind(prefix, 0) != 0) {
+        if (seen.count(rid) > 0 || entry.first.tab_name != tab_name) {
             continue;
         }
-        Version *visible = visible_version(tab_name, rid, context->txn_);
+        Version *visible = visible_version(list, context->txn_);
         if (visible != nullptr && !visible->deleted) {
             result.emplace_back(rid, visible->record);
         }
@@ -398,14 +411,13 @@ std::vector<std::pair<Rid, RmRecord>> TransactionManager::get_visible_records(co
 std::vector<std::pair<Rid, RmRecord>> TransactionManager::get_visible_version_records(const std::string &tab_name,
                                                                                        Context *context) {
     std::lock_guard<std::mutex> lock(mvcc_latch_);
-    const std::string prefix = tab_name + "#";
     std::vector<std::pair<Rid, RmRecord>> result;
     for (auto &entry : versions_) {
-        if (entry.first.rfind(prefix, 0) != 0 || entry.second.empty()) {
+        if (entry.first.tab_name != tab_name || entry.second.empty()) {
             continue;
         }
         const Rid rid = entry.second.front().rid;
-        Version *visible = visible_version(tab_name, rid, context->txn_);
+        Version *visible = visible_version(entry.second, context->txn_);
         if (visible != nullptr && !visible->deleted) {
             result.emplace_back(rid, visible->record);
         }
@@ -416,8 +428,9 @@ std::vector<std::pair<Rid, RmRecord>> TransactionManager::get_visible_version_re
 std::unique_ptr<RmRecord> TransactionManager::get_visible_record(const std::string &tab_name, const Rid &rid,
                                                                   RmFileHandle *fh, Context *context) {
     std::lock_guard<std::mutex> lock(mvcc_latch_);
-    if (versions_.find(version_key(tab_name, rid)) != versions_.end()) {
-        Version *visible = visible_version(tab_name, rid, context->txn_);
+    auto version_it = versions_.find(version_key(tab_name, rid));
+    if (version_it != versions_.end()) {
+        Version *visible = visible_version(version_it->second, context->txn_);
         if (visible == nullptr || visible->deleted) {
             return nullptr;
         }
@@ -475,7 +488,7 @@ void TransactionManager::check_insert_conflict(const std::string &tab_name, cons
     }
     std::lock_guard<std::mutex> lock(mvcc_latch_);
     for (auto &entry : versions_) {
-        if (entry.first.rfind(tab_name + "#", 0) != 0 || entry.second.empty()) {
+        if (entry.first.tab_name != tab_name || entry.second.empty()) {
             continue;
         }
         Version *latest = nullptr;
@@ -519,7 +532,7 @@ void TransactionManager::append_insert_version(const std::string &tab_name, cons
         return;
     }
     std::lock_guard<std::mutex> lock(mvcc_latch_);
-    std::string key = version_key(tab_name, rid);
+    VersionKey key = version_key(tab_name, rid);
     Version version;
     version.rid = rid;
     version.record = record;
@@ -536,7 +549,7 @@ void TransactionManager::append_update_version(const std::string &tab_name, cons
         return;
     }
     std::lock_guard<std::mutex> lock(mvcc_latch_);
-    std::string key = version_key(tab_name, rid);
+    VersionKey key = version_key(tab_name, rid);
     auto &list = versions_[key];
     if (list.empty()) {
         Version base;
@@ -563,7 +576,7 @@ void TransactionManager::append_delete_version(const std::string &tab_name, cons
         return;
     }
     std::lock_guard<std::mutex> lock(mvcc_latch_);
-    std::string key = version_key(tab_name, rid);
+    VersionKey key = version_key(tab_name, rid);
     auto &list = versions_[key];
     if (list.empty()) {
         Version base;
@@ -644,7 +657,7 @@ void TransactionManager::record_select_predicate(const std::string &tab_name, co
     auto &state = ser_states_[txn->get_transaction_id()];
     state.predicates.push_back({tab_name, conds});
     for (auto &entry : versions_) {
-        if (entry.first.rfind(tab_name + "#", 0) != 0) {
+        if (entry.first.tab_name != tab_name) {
             continue;
         }
         for (auto &version : entry.second) {
@@ -918,9 +931,8 @@ std::vector<CheckpointTxnInfo> TransactionManager::active_txn_infos(txn_id_t exc
 
 void TransactionManager::clear_table_versions(const std::string &tab_name) {
     std::lock_guard<std::mutex> lock(mvcc_latch_);
-    const std::string prefix = tab_name + "#";
     for (auto it = versions_.begin(); it != versions_.end();) {
-        if (it->first.rfind(prefix, 0) == 0) {
+        if (it->first.tab_name == tab_name) {
             it = versions_.erase(it);
         } else {
             ++it;
@@ -928,7 +940,7 @@ void TransactionManager::clear_table_versions(const std::string &tab_name) {
     }
     for (auto &entry : txn_version_keys_) {
         for (auto it = entry.second.begin(); it != entry.second.end();) {
-            if (it->rfind(prefix, 0) == 0) {
+            if (it->tab_name == tab_name) {
                 it = entry.second.erase(it);
             } else {
                 ++it;

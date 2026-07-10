@@ -42,6 +42,7 @@ private:
     std::vector<int> log_record_offsets_;                           // checkpoint 后完整日志记录在 log_data_ 中的偏移
     std::unordered_set<txn_id_t> committed_txns_;                    // 需要 redo 的事务
     std::unordered_set<txn_id_t> loser_txns_;                        // 需要 undo 的事务
+    std::unordered_map<std::string, lsn_t> latest_committed_record_lsn_;
     DiskManager* disk_manager_;                                     // 用来读写文件
     BufferPoolManager* buffer_pool_manager_;                        // 对页面进行读写
     SmManager* sm_manager_;                                         // 访问数据库元数据

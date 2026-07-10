@@ -15,6 +15,7 @@ FLAMEGRAPH_DIR="${FLAMEGRAPH_DIR:-}"
 KEEP_SERVER_LOG=1
 MIN_PROFILE_SECONDS="${MIN_PROFILE_SECONDS:-1.0}"
 MAX_PROFILE_ITERATIONS="${MAX_PROFILE_ITERATIONS:-50}"
+PROFILER="${PROFILER:-auto}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -49,6 +50,8 @@ Options:
   --flamegraph-dir DIR
       Directory containing stackcollapse-perf.pl and flamegraph.pl.
       If omitted, tools/FlameGraph is cloned automatically when missing.
+  --profiler auto|perf|gprof|timing
+      Profiling backend. auto prefers perf, then gprof, then timing. Default: auto.
   --keep-server-log
       Retain server.log. This is the default; the flag is accepted for clarity.
   -h, --help
@@ -143,6 +146,11 @@ while [[ $# -gt 0 ]]; do
             FLAMEGRAPH_DIR="$2"
             shift 2
             ;;
+        --profiler)
+            [[ $# -ge 2 ]] || die "--profiler requires a value"
+            PROFILER="$2"
+            shift 2
+            ;;
         --keep-server-log)
             KEEP_SERVER_LOG=1
             shift
@@ -170,6 +178,10 @@ case "${PERF_CALL_GRAPH}" in
     fp|dwarf|lbr|no) ;;
     *) die "--call-graph must be one of: fp, dwarf, lbr, no" ;;
 esac
+case "${PROFILER}" in
+    auto|perf|gprof|timing) ;;
+    *) die "--profiler must be one of: auto, perf, gprof, timing" ;;
+esac
 
 if [[ -z "${OUT_DIR}" ]]; then
     OUT_DIR="perf_runs/$(date +%Y%m%d_%H%M%S)"
@@ -186,14 +198,37 @@ esac
 
 require_cmd cmake
 require_cmd python3
-require_cmd perf
-require_cmd perl
+
+select_profiler() {
+    if [[ "${PROFILER}" == "auto" ]]; then
+        if command -v perf >/dev/null 2>&1; then
+            PROFILER="perf"
+        elif command -v gprof >/dev/null 2>&1; then
+            PROFILER="gprof"
+        else
+            PROFILER="timing"
+        fi
+    fi
+    case "${PROFILER}" in
+        perf)
+            require_cmd perf
+            require_cmd perl
+            ;;
+        gprof)
+            require_cmd gprof
+            ;;
+        timing) ;;
+    esac
+    info "using profiler backend: ${PROFILER}"
+}
+
+select_profiler
 
 mkdir -p "${OUT_DIR}"
 
 METRICS_CSV="${OUT_DIR}/metrics.csv"
 SUMMARY_MD="${OUT_DIR}/summary.md"
-printf 'scenario,phase,rows,elapsed_seconds,ratio_percent,status,flamegraph\n' > "${METRICS_CSV}"
+printf 'scenario,phase,rows,elapsed_seconds,ratio_percent,status,profile_artifact\n' > "${METRICS_CSV}"
 
 check_perf_hint() {
     if [[ -r /proc/sys/kernel/perf_event_paranoid ]]; then
@@ -233,10 +268,14 @@ build_rmdb() {
         info "skipping build because --no-build was provided"
     else
         info "configuring RelWithDebInfo build in ${BUILD_DIR}"
+        local profile_flags=""
+        if [[ "${PROFILER}" == "gprof" ]]; then
+            profile_flags=" -pg"
+        fi
         cmake -S "${REPO_ROOT}" -B "${BUILD_DIR}" \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g -fno-omit-frame-pointer -DNDEBUG" \
-            -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O2 -g -fno-omit-frame-pointer -DNDEBUG"
+            -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g -fno-omit-frame-pointer -DNDEBUG${profile_flags}" \
+            -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O2 -g -fno-omit-frame-pointer -DNDEBUG${profile_flags}"
 
         local jobs
         jobs="$(nproc 2>/dev/null || printf '4')"
@@ -556,24 +595,28 @@ profile_phase() {
     local total_elapsed="0"
     local iterations=0
 
-    info "profiling ${scenario}/${phase}"
-    perf record -F "${SAMPLE_FREQUENCY}" -e "${PERF_EVENT}" --call-graph "${PERF_CALL_GRAPH}" \
-        -p "${ACTIVE_SERVER_PID}" \
-        -o "${perf_data}" -- sleep 86400 > "${perf_log}" 2>&1 &
-    ACTIVE_PERF_PID="$!"
+    info "profiling ${scenario}/${phase} with ${PROFILER}"
+    if [[ "${PROFILER}" == "perf" ]]; then
+        perf record -F "${SAMPLE_FREQUENCY}" -e "${PERF_EVENT}" --call-graph "${PERF_CALL_GRAPH}" \
+            -p "${ACTIVE_SERVER_PID}" \
+            -o "${perf_data}" -- sleep 86400 > "${perf_log}" 2>&1 &
+        ACTIVE_PERF_PID="$!"
 
-    sleep 0.5
-    if ! kill -0 "${ACTIVE_PERF_PID}" >/dev/null 2>&1; then
-        wait "${ACTIVE_PERF_PID}" >/dev/null 2>&1 || true
-        ACTIVE_PERF_PID=""
-        perf_failed_message "${perf_log}"
+        sleep 0.5
+        if ! kill -0 "${ACTIVE_PERF_PID}" >/dev/null 2>&1; then
+            wait "${ACTIVE_PERF_PID}" >/dev/null 2>&1 || true
+            ACTIVE_PERF_PID=""
+            perf_failed_message "${perf_log}"
+        fi
     fi
 
     while true; do
         iterations=$((iterations + 1))
         if ! elapsed="$(run_client "${sql_file}" "${client_log}" "${phase}_iter${iterations}" "${responses}")"; then
-            kill -INT "${ACTIVE_PERF_PID}" >/dev/null 2>&1 || true
-            wait "${ACTIVE_PERF_PID}" >/dev/null 2>&1 || true
+            if [[ -n "${ACTIVE_PERF_PID}" ]]; then
+                kill -INT "${ACTIVE_PERF_PID}" >/dev/null 2>&1 || true
+                wait "${ACTIVE_PERF_PID}" >/dev/null 2>&1 || true
+            fi
             ACTIVE_PERF_PID=""
             die "client failed during ${scenario}/${phase}; see ${client_log} and ${scenario_dir}/server.log"
         fi
@@ -595,11 +638,12 @@ PY
         fi
     done
 
-    kill -INT "${ACTIVE_PERF_PID}" >/dev/null 2>&1 || true
-    wait "${ACTIVE_PERF_PID}" >/dev/null 2>&1 || true
-    ACTIVE_PERF_PID=""
-
-    generate_flamegraph "${scenario_dir}" "${phase}"
+    if [[ "${PROFILER}" == "perf" ]]; then
+        kill -INT "${ACTIVE_PERF_PID}" >/dev/null 2>&1 || true
+        wait "${ACTIVE_PERF_PID}" >/dev/null 2>&1 || true
+        ACTIVE_PERF_PID=""
+        generate_flamegraph "${scenario_dir}" "${phase}"
+    fi
     {
         printf '# profile_phase=%s iterations=%s total_elapsed=%s min_profile_seconds=%s\n' \
             "${phase}" "${iterations}" "${total_elapsed}" "${MIN_PROFILE_SECONDS}"
@@ -610,15 +654,36 @@ print(f"{float(sys.argv[1]) / int(sys.argv[2]):.9f}")
 PY
 }
 
+generate_gprof_report() {
+    local scenario_dir="$1"
+    local gmon="${scenario_dir}/gmon.out"
+    local report="${scenario_dir}/gprof.txt"
+    if [[ ! -s "${gmon}" ]]; then
+        info "gprof did not produce ${gmon}; retaining timing metrics only"
+        return 0
+    fi
+    gprof "${RMDB_BIN}" "${gmon}" > "${report}"
+}
+
+profile_artifact() {
+    local scenario="$1"
+    local phase="$2"
+    case "${PROFILER}" in
+        perf) printf '%s/%s.flamegraph.svg\n' "${scenario}" "${phase}" ;;
+        gprof) printf '%s/gprof.txt\n' "${scenario}" ;;
+        timing) printf '\n' ;;
+    esac
+}
+
 append_metric() {
     local scenario="$1"
     local phase="$2"
     local elapsed="$3"
     local ratio="$4"
     local status="$5"
-    local flamegraph="$6"
+    local profile_artifact="$6"
     printf '%s,%s,%s,%s,%s,%s,%s\n' \
-        "${scenario}" "${phase}" "${ROWS}" "${elapsed}" "${ratio}" "${status}" "${flamegraph}" >> "${METRICS_CSV}"
+        "${scenario}" "${phase}" "${ROWS}" "${elapsed}" "${ratio}" "${status}" "${profile_artifact}" >> "${METRICS_CSV}"
 }
 
 ratio_percent() {
@@ -738,16 +803,22 @@ run_index_scenario() {
     post_elapsed="$(profile_phase "${scenario_dir}" "${scenario}" "post_index" "${scenario_dir}/profile_post_index.sql" "${client_log}")"
     stop_server
 
+    if [[ "${PROFILER}" == "gprof" ]]; then
+        generate_gprof_report "${scenario_dir}"
+    fi
+
     if [[ -f "${scenario_dir}/${db_name}/output.txt" ]]; then
         cp "${scenario_dir}/${db_name}/output.txt" "${scenario_dir}/output.txt"
     fi
-    cp "${scenario_dir}/post_index.perf.data" "${scenario_dir}/perf.data"
-    cp "${scenario_dir}/post_index.flamegraph.svg" "${scenario_dir}/flamegraph.svg"
+    if [[ "${PROFILER}" == "perf" ]]; then
+        cp "${scenario_dir}/post_index.perf.data" "${scenario_dir}/perf.data"
+        cp "${scenario_dir}/post_index.flamegraph.svg" "${scenario_dir}/flamegraph.svg"
+    fi
 
     ratio="$(ratio_percent "${pre_elapsed}" "${post_elapsed}")"
     status="$(ratio_status "${ratio}")"
-    append_metric "${scenario}" "pre_index" "${pre_elapsed}" "" "BASELINE" "${scenario}/pre_index.flamegraph.svg"
-    append_metric "${scenario}" "post_index" "${post_elapsed}" "${ratio}" "${status}" "${scenario}/post_index.flamegraph.svg"
+    append_metric "${scenario}" "pre_index" "${pre_elapsed}" "" "BASELINE" "$(profile_artifact "${scenario}" "pre_index")"
+    append_metric "${scenario}" "post_index" "${post_elapsed}" "${ratio}" "${status}" "$(profile_artifact "${scenario}" "post_index")"
 }
 
 run_inlj_scenario() {
@@ -776,11 +847,17 @@ run_inlj_scenario() {
     run_client "${scenario_dir}/explain.sql" "${client_log}" "explain_post" "${scenario_dir}/explain_post.txt" >/dev/null
     stop_server
 
+    if [[ "${PROFILER}" == "gprof" ]]; then
+        generate_gprof_report "${scenario_dir}"
+    fi
+
     if [[ -f "${scenario_dir}/${db_name}/output.txt" ]]; then
         cp "${scenario_dir}/${db_name}/output.txt" "${scenario_dir}/output.txt"
     fi
-    cp "${scenario_dir}/post_index.perf.data" "${scenario_dir}/perf.data"
-    cp "${scenario_dir}/post_index.flamegraph.svg" "${scenario_dir}/flamegraph.svg"
+    if [[ "${PROFILER}" == "perf" ]]; then
+        cp "${scenario_dir}/post_index.perf.data" "${scenario_dir}/perf.data"
+        cp "${scenario_dir}/post_index.flamegraph.svg" "${scenario_dir}/flamegraph.svg"
+    fi
 
     ratio="$(ratio_percent "${pre_elapsed}" "${post_elapsed}")"
     ratio_result="$(ratio_status "${ratio}")"
@@ -795,18 +872,18 @@ run_inlj_scenario() {
         status="FAIL"
     fi
 
-    append_metric "${scenario}" "pre_index" "${pre_elapsed}" "" "BASELINE" "${scenario}/pre_index.flamegraph.svg"
-    append_metric "${scenario}" "post_index" "${post_elapsed}" "${ratio}" "${status}" "${scenario}/post_index.flamegraph.svg"
+    append_metric "${scenario}" "pre_index" "${pre_elapsed}" "" "BASELINE" "$(profile_artifact "${scenario}" "pre_index")"
+    append_metric "${scenario}" "post_index" "${post_elapsed}" "${ratio}" "${status}" "$(profile_artifact "${scenario}" "post_index")"
 }
 
 write_summary() {
     python3 - "${METRICS_CSV}" "${SUMMARY_MD}" "${MODE}" "${ROWS}" "${OUT_DIR}" "${BUILD_DIR}" \
         "${PORT}" "${SAMPLE_FREQUENCY}" "${MIN_PROFILE_SECONDS}" "${MAX_PROFILE_ITERATIONS}" \
-        "${PERF_EVENT}" "${PERF_CALL_GRAPH}" <<'PY'
+        "${PERF_EVENT}" "${PERF_CALL_GRAPH}" "${PROFILER}" <<'PY'
 import csv
 import sys
 
-metrics, summary, mode, rows, out_dir, build_dir, port, frequency, min_seconds, max_iterations, event, call_graph = sys.argv[1:]
+metrics, summary, mode, rows, out_dir, build_dir, port, frequency, min_seconds, max_iterations, event, call_graph, profiler = sys.argv[1:]
 
 with open(metrics, newline="", encoding="utf-8") as f:
     rows_data = list(csv.DictReader(f))
@@ -816,6 +893,7 @@ with open(summary, "w", encoding="utf-8") as out:
     out.write(f"- mode: `{mode}`\n")
     out.write(f"- rows: `{rows}`\n")
     out.write(f"- port: `{port}`\n")
+    out.write(f"- profiler: `{profiler}`\n")
     out.write(f"- perf sample frequency: `{frequency}`\n")
     out.write(f"- perf event: `{event}`\n")
     out.write(f"- perf call graph: `{call_graph}`\n")
@@ -823,21 +901,23 @@ with open(summary, "w", encoding="utf-8") as out:
     out.write(f"- max profile iterations: `{max_iterations}`\n")
     out.write(f"- build dir: `{build_dir}`\n")
     out.write(f"- output dir: `{out_dir}`\n\n")
-    out.write("| Scenario | Phase | Rows | Seconds | Ratio % | Status | FlameGraph |\n")
+    out.write("| Scenario | Phase | Rows | Seconds | Ratio % | Status | Profile artifact |\n")
     out.write("|---|---:|---:|---:|---:|---|---|\n")
     for row in rows_data:
         ratio = row["ratio_percent"] or "-"
-        flame = row["flamegraph"]
+        artifact = row["profile_artifact"] or "-"
         out.write(
             f"| {row['scenario']} | {row['phase']} | {row['rows']} | "
-            f"{row['elapsed_seconds']} | {ratio} | {row['status']} | `{flame}` |\n"
+            f"{row['elapsed_seconds']} | {ratio} | {row['status']} | `{artifact}` |\n"
         )
 PY
 }
 
 main() {
     check_perf_hint
-    ensure_flamegraph
+    if [[ "${PROFILER}" == "perf" ]]; then
+        ensure_flamegraph
+    fi
     write_client
     build_rmdb
 

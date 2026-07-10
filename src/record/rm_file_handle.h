@@ -13,6 +13,8 @@ See the Mulan PSL v2 for more details. */
 #include <assert.h>
 
 #include <memory>
+#include <mutex>
+#include <unordered_set>
 
 #include "bitmap.h"
 #include "rm_defs.h"
@@ -50,6 +52,8 @@ class RmFileHandle {
     BufferPoolManager *buffer_pool_manager_;
     int fd_;        // 打开文件后产生的文件句柄
     RmFileHdr file_hdr_;    // 文件头，维护当前表文件的元数据
+    std::mutex deleted_rids_latch_;
+    std::unordered_set<Rid> reserved_deleted_rids_;
 
    public:
     RmFileHandle(DiskManager *disk_manager, BufferPoolManager *buffer_pool_manager, int fd)
@@ -80,6 +84,16 @@ class RmFileHandle {
     std::unique_ptr<RmRecord> get_record(const Rid &rid, Context *context) const;
 
     Rid get_next_insert_rid();
+
+    void reserve_deleted_rid(const Rid &rid) {
+        std::lock_guard<std::mutex> lock(deleted_rids_latch_);
+        reserved_deleted_rids_.insert(rid);
+    }
+
+    void release_deleted_rid(const Rid &rid) {
+        std::lock_guard<std::mutex> lock(deleted_rids_latch_);
+        reserved_deleted_rids_.erase(rid);
+    }
 
     Rid insert_record(char *buf, Context *context);
 

@@ -75,10 +75,22 @@ lsn_t LogManager::get_persist_lsn() {
 lsn_t LogManager::add_log_record(LogRecord* log_record, Transaction* txn) {
     std::lock_guard<std::mutex> lock(latch_);
     ensure_lsn_initialized_unlocked();
-    if (log_buffer_.is_full(log_record->log_tot_len_)) {
+    bool needs_begin = txn != nullptr && txn->get_prev_lsn() == INVALID_LSN &&
+                       log_record->log_type_ != LogType::begin;
+    int append_size = static_cast<int>(log_record->log_tot_len_) + (needs_begin ? LOG_HEADER_SIZE : 0);
+    if (log_buffer_.is_full(append_size)) {
         disk_manager_->write_log(log_buffer_.buffer_, log_buffer_.offset_);
         persist_lsn_ = next_lsn_ - 1;
         log_buffer_.offset_ = 0;
+    }
+    if (needs_begin) {
+        BeginLogRecord begin_record(txn->get_transaction_id());
+        begin_record.lsn_ = next_lsn_;
+        next_lsn_ += static_cast<lsn_t>(begin_record.log_tot_len_);
+        begin_record.serialize(log_buffer_.buffer_ + log_buffer_.offset_);
+        log_buffer_.offset_ += static_cast<int>(begin_record.log_tot_len_);
+        txn->set_first_lsn(begin_record.lsn_);
+        txn->set_prev_lsn(begin_record.lsn_);
     }
     log_record->lsn_ = next_lsn_;
     next_lsn_ += static_cast<lsn_t>(log_record->log_tot_len_);
@@ -120,6 +132,7 @@ void LogManager::create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_
         flush_fds.push_back(entry.second->GetFd());
     }
     for (auto &entry : sm_manager->ihs_) {
+        entry.second->flush_file_hdr();
         flush_fds.push_back(entry.second->get_fd());
     }
     if (bpm != nullptr) {

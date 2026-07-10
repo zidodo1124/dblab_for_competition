@@ -16,6 +16,7 @@ See the Mulan PSL v2 for more details. */
 #include <unordered_set>
 #include <optional>
 #include <functional>
+#include <memory>
 #include <shared_mutex>
 
 #include "transaction.h"
@@ -100,6 +101,15 @@ public:
     std::shared_lock<std::shared_mutex> acquire_read_latch() {
         return std::shared_lock<std::shared_mutex>(write_latch_);
     }
+    std::shared_lock<std::shared_mutex> acquire_operation_latch() {
+        return std::shared_lock<std::shared_mutex>(write_latch_);
+    }
+    std::shared_lock<std::shared_mutex> acquire_table_read_latch(const std::string &tab_name) {
+        return std::shared_lock<std::shared_mutex>(*table_latch(tab_name));
+    }
+    std::unique_lock<std::shared_mutex> acquire_table_write_latch(const std::string &tab_name) {
+        return std::unique_lock<std::shared_mutex>(*table_latch(tab_name));
+    }
 
     /**
      * @description: 获取事务ID为txn_id的事务对象
@@ -175,6 +185,23 @@ public:
 
 
 private:
+    struct VersionKey {
+        std::string tab_name;
+        Rid rid{};
+
+        bool operator==(const VersionKey &other) const {
+            return tab_name == other.tab_name && rid == other.rid;
+        }
+    };
+
+    struct VersionKeyHash {
+        size_t operator()(const VersionKey &key) const {
+            size_t table_hash = std::hash<std::string>{}(key.tab_name);
+            size_t rid_hash = std::hash<Rid>{}(key.rid);
+            return table_hash ^ (rid_hash + 0x9e3779b9U + (table_hash << 6) + (table_hash >> 2));
+        }
+    };
+
     struct Version {
         Rid rid{};
         RmRecord record;
@@ -207,7 +234,7 @@ private:
         bool aborted{false};
     };
 
-    std::string version_key(const std::string &tab_name, const Rid &rid) const;
+    VersionKey version_key(const std::string &tab_name, const Rid &rid) const;
     int64_t rid_key(const Rid &rid) const;
     size_t record_hash(const RmRecord &record) const;
     bool same_record(const RmRecord &lhs, const RmRecord &rhs) const;
@@ -215,6 +242,7 @@ private:
     void ensure_base_version(const std::string &tab_name, const Rid &rid, RmFileHandle *fh, Context *context);
     Version *latest_version(const std::string &tab_name, const Rid &rid);
     Version *visible_version(const std::string &tab_name, const Rid &rid, Transaction *txn);
+    Version *visible_version(std::vector<Version> &versions, Transaction *txn);
     bool version_visible(const Version &version, Transaction *txn) const;
     bool record_matches(const std::string &tab_name, const std::vector<Condition> &conds, const RmRecord &record);
     bool add_rw_edge(txn_id_t reader, txn_id_t writer);
@@ -222,6 +250,12 @@ private:
     bool creates_dangerous_structure(txn_id_t reader, txn_id_t writer);
     bool tout_committed_before_tin(txn_id_t tout, txn_id_t tin) const;
     bool txn_relevant_for_ser(txn_id_t txn_id, Transaction *current);
+    std::shared_ptr<std::shared_mutex> table_latch(const std::string &tab_name) {
+        std::lock_guard<std::mutex> lock(table_latches_mutex_);
+        auto [it, inserted] = table_latches_.try_emplace(tab_name, std::make_shared<std::shared_mutex>());
+        (void)inserted;
+        return it->second;
+    }
 
     ConcurrencyMode concurrency_mode_;      // 事务使用的并发控制算法，目前只需要考虑2PL
     std::atomic<txn_id_t> next_txn_id_{0};  // 用于分发事务ID
@@ -232,9 +266,11 @@ private:
 
     std::mutex mvcc_latch_;
     std::shared_mutex write_latch_;
+    std::mutex table_latches_mutex_;
+    std::unordered_map<std::string, std::shared_ptr<std::shared_mutex>> table_latches_;
     std::unordered_set<txn_id_t> active_txns_;
-    std::unordered_map<std::string, std::vector<Version>> versions_;
-    std::unordered_map<txn_id_t, std::unordered_set<std::string>> txn_version_keys_;
+    std::unordered_map<VersionKey, std::vector<Version>, VersionKeyHash> versions_;
+    std::unordered_map<txn_id_t, std::unordered_set<VersionKey, VersionKeyHash>> txn_version_keys_;
     std::unordered_map<std::string, std::unordered_map<size_t, std::vector<NoIndexWrite>>> no_index_writes_;
     std::unordered_map<txn_id_t, std::vector<std::pair<std::string, size_t>>> txn_no_index_write_keys_;
     std::unordered_map<txn_id_t, TxnSerState> ser_states_;

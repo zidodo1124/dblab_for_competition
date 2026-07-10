@@ -17,6 +17,7 @@ z_teach/
 z_learn/
 z_per/
 build-profile/
+build-gprof/
 
 # Local performance profiling outputs.
 perf_runs/

@@ -255,8 +255,10 @@ class IndexScanExecutor : public AbstractExecutor {
     }
 
     void beginTuple() override {
-        auto read_guard = context_->txn_mgr_ != nullptr ? context_->txn_mgr_->acquire_read_latch()
-                                                        : std::shared_lock<std::shared_mutex>();
+        auto operation_guard = context_->txn_mgr_ != nullptr ? context_->txn_mgr_->acquire_operation_latch()
+                                                             : std::shared_lock<std::shared_mutex>();
+        auto table_guard = context_->txn_mgr_ != nullptr ? context_->txn_mgr_->acquire_table_read_latch(tab_name_)
+                                                         : std::shared_lock<std::shared_mutex>();
         visible_records_.clear();
         cursor_ = 0;
         current_scan_conds_ = scan_conds();

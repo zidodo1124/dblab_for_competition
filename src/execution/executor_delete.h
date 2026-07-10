@@ -37,7 +37,9 @@ class DeleteExecutor : public AbstractExecutor {
     }
 
     std::unique_ptr<RmRecord> Next() override {
-        auto write_guard = context_->txn_mgr_ != nullptr ? context_->txn_mgr_->acquire_write_latch()
+        auto operation_guard = context_->txn_mgr_ != nullptr ? context_->txn_mgr_->acquire_operation_latch()
+                                                             : std::shared_lock<std::shared_mutex>();
+        auto table_guard = context_->txn_mgr_ != nullptr ? context_->txn_mgr_->acquire_table_write_latch(tab_name_)
                                                          : std::unique_lock<std::shared_mutex>();
         for (auto &rid : rids_) {
             if (context_->txn_mgr_ != nullptr) {
@@ -66,6 +68,9 @@ class DeleteExecutor : public AbstractExecutor {
                     offset += index.cols[i].len;
                 }
                 ih->delete_entry(key.data(), context_->txn_);
+            }
+            if (context_->txn_ != nullptr) {
+                fh_->reserve_deleted_rid(rid);
             }
             fh_->delete_record(rid, context_, lsn);
             if (context_->txn_ != nullptr) {

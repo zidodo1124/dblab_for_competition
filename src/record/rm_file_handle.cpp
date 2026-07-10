@@ -30,14 +30,28 @@ std::unique_ptr<RmRecord> RmFileHandle::get_record(const Rid& rid, Context* cont
 }
 
 Rid RmFileHandle::get_next_insert_rid() {
-    if (file_hdr_.first_free_page_no == RM_NO_PAGE) {
-        return Rid{file_hdr_.num_pages, 0};
+    std::lock_guard<std::mutex> lock(deleted_rids_latch_);
+    int page_no = file_hdr_.first_free_page_no;
+    while (page_no != RM_NO_PAGE) {
+        RmPageHandle page_handle = fetch_page_handle(page_no);
+        int first_free = Bitmap::first_bit(false, page_handle.bitmap, file_hdr_.num_records_per_page);
+        if (first_free < file_hdr_.num_records_per_page &&
+            reserved_deleted_rids_.count(Rid{page_no, first_free}) == 0) {
+            buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), false);
+            return Rid{page_no, first_free};
+        }
+        for (int slot_no = first_free + 1; slot_no < file_hdr_.num_records_per_page; ++slot_no) {
+            Rid rid{page_no, slot_no};
+            if (!Bitmap::is_set(page_handle.bitmap, slot_no) && reserved_deleted_rids_.count(rid) == 0) {
+                buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), false);
+                return rid;
+            }
+        }
+        int next_page_no = page_handle.page_hdr->next_free_page_no;
+        buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), false);
+        page_no = next_page_no;
     }
-    RmPageHandle page_handle = fetch_page_handle(file_hdr_.first_free_page_no);
-    int slot_no = Bitmap::first_bit(false, page_handle.bitmap, file_hdr_.num_records_per_page);
-    Rid rid{page_handle.page->get_page_id().page_no, slot_no};
-    buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), false);
-    return rid;
+    return Rid{file_hdr_.num_pages, 0};
 }
 
 /**
@@ -47,23 +61,11 @@ Rid RmFileHandle::get_next_insert_rid() {
  * @return {Rid} 插入的记录的记录号（位置）
  */
 Rid RmFileHandle::insert_record(char* buf, Context* context) {
-    RmPageHandle page_handle = create_page_handle();
-    int slot_no = Bitmap::first_bit(false, page_handle.bitmap, file_hdr_.num_records_per_page);
-    assert(slot_no < file_hdr_.num_records_per_page);
-
-    memcpy(page_handle.get_slot(slot_no), buf, file_hdr_.record_size);
-    Bitmap::set(page_handle.bitmap, slot_no);
-    page_handle.page_hdr->num_records++;
-    if (page_handle.page_hdr->num_records == file_hdr_.num_records_per_page) {
-        file_hdr_.first_free_page_no = page_handle.page_hdr->next_free_page_no;
-        page_handle.page_hdr->next_free_page_no = RM_NO_PAGE;
-    }
-
-    if (context != nullptr && context->txn_ != nullptr && context->txn_->get_prev_lsn() != INVALID_LSN) {
-        page_handle.page->set_page_lsn(context->txn_->get_prev_lsn());
-    }
-    Rid rid{page_handle.page->get_page_id().page_no, slot_no};
-    buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), true);
+    Rid rid = get_next_insert_rid();
+    lsn_t page_lsn = context != nullptr && context->txn_ != nullptr
+                         ? context->txn_->get_prev_lsn()
+                         : INVALID_LSN;
+    insert_record(rid, buf, page_lsn);
     return rid;
 }
 

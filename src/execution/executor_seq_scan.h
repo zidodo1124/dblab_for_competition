@@ -59,6 +59,8 @@ class SeqScanExecutor : public AbstractExecutor {
     }
 
     void beginTuple() override {
+        auto read_guard = context_->txn_mgr_ != nullptr ? context_->txn_mgr_->acquire_read_latch()
+                                                        : std::shared_lock<std::shared_mutex>();
         visible_records_.clear();
         cursor_ = 0;
         if (context_->txn_mgr_ != nullptr) {

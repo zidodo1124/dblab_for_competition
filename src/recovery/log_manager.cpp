@@ -101,7 +101,8 @@ lsn_t LogManager::add_log_record(LogRecord* log_record, Transaction* txn) {
 
 void LogManager::create_static_checkpoint(BufferPoolManager* bpm, SmManager* sm_manager, TransactionManager* txn_mgr,
                                           Transaction* current_txn) {
-    auto write_guard = txn_mgr != nullptr ? txn_mgr->acquire_write_latch() : std::unique_lock<std::mutex>();
+    auto write_guard =
+        txn_mgr != nullptr ? txn_mgr->acquire_write_latch() : std::unique_lock<std::shared_mutex>();
     flush_log_to_disk();
     int checkpoint_offset = disk_manager_->get_file_size(LOG_FILE_NAME);
     bool current_is_implicit = current_txn != nullptr && !current_txn->get_txn_mode();

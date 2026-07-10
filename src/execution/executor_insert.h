@@ -49,7 +49,7 @@ class InsertExecutor : public AbstractExecutor {
 
     std::unique_ptr<RmRecord> Next() override {
         auto write_guard = context_->txn_mgr_ != nullptr ? context_->txn_mgr_->acquire_write_latch()
-                                                         : std::unique_lock<std::mutex>();
+                                                         : std::unique_lock<std::shared_mutex>();
         // Make record buffer
         RmRecord rec(fh_->get_file_hdr().record_size);
         for (size_t i = 0; i < values_.size(); i++) {

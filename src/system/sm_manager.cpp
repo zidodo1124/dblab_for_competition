@@ -494,7 +494,7 @@ size_t SmManager::load_table(const std::string& file_name, const std::string& ta
 
     auto write_guard = context != nullptr && context->txn_mgr_ != nullptr
                        ? context->txn_mgr_->acquire_write_latch()
-                       : std::unique_lock<std::mutex>();
+                       : std::unique_lock<std::shared_mutex>();
 
     std::string line;
     size_t line_no = 0;

@@ -58,7 +58,7 @@ class UpdateExecutor : public AbstractExecutor {
     }
     std::unique_ptr<RmRecord> Next() override {
         auto write_guard = context_->txn_mgr_ != nullptr ? context_->txn_mgr_->acquire_write_latch()
-                                                         : std::unique_lock<std::mutex>();
+                                                         : std::unique_lock<std::shared_mutex>();
         std::vector<RmRecord> old_recs;
         std::vector<RmRecord> new_recs;
         std::vector<Rid> target_rids;
@@ -137,10 +137,14 @@ class UpdateExecutor : public AbstractExecutor {
             }
         }
 
-        for (size_t i = 0; i < target_rids.size(); ++i) {
-            if (context_->txn_mgr_ != nullptr) {
-                context_->txn_mgr_->check_ser_write(tab_name_, target_rids[i], &old_recs[i], &new_recs[i], context_->txn_);
+        if (context_->txn_mgr_ != nullptr) {
+            for (size_t i = 0; i < target_rids.size(); ++i) {
+                context_->txn_mgr_->check_ser_write(tab_name_, target_rids[i], &old_recs[i], &new_recs[i],
+                                                     context_->txn_);
             }
+        }
+
+        for (size_t i = 0; i < target_rids.size(); ++i) {
             for (auto &index : tab_.indexes) {
                 auto ih = sm_manager_->ihs_.at(sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols)).get();
                 auto key = make_index_key(&old_recs[i], index);

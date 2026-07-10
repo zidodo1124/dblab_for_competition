@@ -213,6 +213,10 @@ void SetTransaction(txn_id_t *txn_id, Context *context, IsolationLevel session_i
     context->txn_ = txn_manager->get_transaction(*txn_id);
     if(context->txn_ == nullptr || context->txn_->get_state() == TransactionState::COMMITTED ||
         context->txn_->get_state() == TransactionState::ABORTED) {
+        if (context->txn_ != nullptr) {
+            txn_manager->retire_transaction(*txn_id);
+            context->txn_ = nullptr;
+        }
         context->txn_ = txn_manager->begin(nullptr, context->log_mgr_);
         context->txn_->set_isolation_level(session_isolation);
         *txn_id = context->txn_->get_transaction_id();
@@ -416,6 +420,7 @@ void *client_handler(void *sock_fd) {
             std::cerr << "Failed to roll back disconnected transaction " << txn_id << ": " << e.what() << std::endl;
         }
     }
+    txn_manager->retire_transaction(txn_id);
 
     // Clear
     if (verbose) {

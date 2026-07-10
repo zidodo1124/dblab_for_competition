@@ -90,10 +90,16 @@ public:
     void check_ser_write(const std::string &tab_name, const Rid &rid, const RmRecord *old_record,
                          const RmRecord *new_record, Transaction *txn);
     void cleanup_abort(Transaction *txn);
+    void retire_transaction(txn_id_t txn_id);
     void clear_table_versions(const std::string &tab_name);
     std::vector<txn_id_t> active_txn_ids(txn_id_t exclude_txn_id = INVALID_TXN_ID);
     std::vector<CheckpointTxnInfo> active_txn_infos(txn_id_t exclude_txn_id = INVALID_TXN_ID);
-    std::unique_lock<std::mutex> acquire_write_latch() { return std::unique_lock<std::mutex>(write_latch_); }
+    std::unique_lock<std::shared_mutex> acquire_write_latch() {
+        return std::unique_lock<std::shared_mutex>(write_latch_);
+    }
+    std::shared_lock<std::shared_mutex> acquire_read_latch() {
+        return std::shared_lock<std::shared_mutex>(write_latch_);
+    }
 
     /**
      * @description: 获取事务ID为txn_id的事务对象
@@ -102,10 +108,13 @@ public:
      */    
     Transaction* get_transaction(txn_id_t txn_id) {
         if(txn_id == INVALID_TXN_ID) return nullptr;
-        
+
         std::unique_lock<std::mutex> lock(latch_);
-        assert(TransactionManager::txn_map.find(txn_id) != TransactionManager::txn_map.end());
-        auto *res = TransactionManager::txn_map[txn_id];
+        auto txn_it = TransactionManager::txn_map.find(txn_id);
+        if (txn_it == TransactionManager::txn_map.end()) {
+            return nullptr;
+        }
+        auto *res = txn_it->second;
         lock.unlock();
         assert(res != nullptr);
         assert(res->get_thread_id() == std::this_thread::get_id());
@@ -222,7 +231,7 @@ private:
     LockManager *lock_manager_;
 
     std::mutex mvcc_latch_;
-    std::mutex write_latch_;
+    std::shared_mutex write_latch_;
     std::unordered_set<txn_id_t> active_txns_;
     std::unordered_map<std::string, std::vector<Version>> versions_;
     std::unordered_map<txn_id_t, std::unordered_set<std::string>> txn_version_keys_;

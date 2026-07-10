@@ -853,6 +853,30 @@ void TransactionManager::cleanup_abort(Transaction *txn) {
     }
 }
 
+void TransactionManager::retire_transaction(txn_id_t txn_id) {
+    if (txn_id == INVALID_TXN_ID) {
+        return;
+    }
+    auto write_guard = acquire_write_latch();
+    Transaction *retired = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(latch_);
+        auto txn_it = txn_map.find(txn_id);
+        if (txn_it == txn_map.end()) {
+            return;
+        }
+        Transaction *txn = txn_it->second;
+        if (txn == nullptr || active_txns_.count(txn_id) > 0 ||
+            (txn->get_state() != TransactionState::COMMITTED &&
+             txn->get_state() != TransactionState::ABORTED)) {
+            return;
+        }
+        retired = txn;
+        txn_map.erase(txn_it);
+    }
+    delete retired;
+}
+
 std::vector<txn_id_t> TransactionManager::active_txn_ids(txn_id_t exclude_txn_id) {
     std::unique_lock<std::mutex> lock(latch_);
     std::vector<txn_id_t> active;

@@ -85,7 +85,7 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
         };
 
         std::vector<ColMeta> all_cols;
-        get_all_cols(query->tables, all_cols);
+        get_all_cols(query->tables, all_cols, &query->table_real_names);
         // 处理target list，再target list中添加上表名，例如 a.id
         if (x->select_items.empty()) {
             query->select_all = true;
@@ -206,7 +206,7 @@ std::shared_ptr<Query> Analyze::do_analyze(std::shared_ptr<ast::TreeNode> parse)
                 resolve_table_alias(cond.rhs_col.tab_name);
             }
         }
-        check_clause(query->tables, query->conds);
+        check_clause(query->tables, query->conds, &query->table_real_names);
     } else if (auto x = std::dynamic_pointer_cast<ast::UnionStmt>(parse)) {
         query->is_union = true;
         query->union_alias = x->alias;
@@ -303,11 +303,16 @@ TabCol Analyze::check_column(const std::vector<ColMeta> &all_cols, TabCol target
     return target;
 }
 
-void Analyze::get_all_cols(const std::vector<std::string> &tab_names, std::vector<ColMeta> &all_cols) {
+void Analyze::get_all_cols(const std::vector<std::string> &tab_names, std::vector<ColMeta> &all_cols,
+                           const std::map<std::string, std::string> *table_real_names) {
     for (auto &sel_tab_name : tab_names) {
-        // 这里db_不能写成get_db(), 注意要传指针
-        auto real_it = ast::pending_tab_real_names.find(sel_tab_name);
-        const auto &real_name = real_it == ast::pending_tab_real_names.end() ? sel_tab_name : real_it->second;
+        std::string real_name = sel_tab_name;
+        if (table_real_names != nullptr) {
+            auto real_it = table_real_names->find(sel_tab_name);
+            if (real_it != table_real_names->end()) {
+                real_name = real_it->second;
+            }
+        }
         auto sel_tab_cols = sm_manager_->db_.get_table(real_name).cols;
         for (auto &col : sel_tab_cols) {
             col.tab_name = sel_tab_name;
@@ -333,10 +338,18 @@ void Analyze::get_clause(const std::vector<std::shared_ptr<ast::BinaryExpr>> &sv
     }
 }
 
-void Analyze::check_clause(const std::vector<std::string> &tab_names, std::vector<Condition> &conds) {
+void Analyze::check_clause(const std::vector<std::string> &tab_names, std::vector<Condition> &conds,
+                           const std::map<std::string, std::string> *table_real_names) {
     // auto all_cols = get_all_cols(tab_names);
     std::vector<ColMeta> all_cols;
-    get_all_cols(tab_names, all_cols);
+    get_all_cols(tab_names, all_cols, table_real_names);
+    auto real_table_name = [&](const std::string &tab_name) {
+        if (table_real_names == nullptr) {
+            return tab_name;
+        }
+        auto it = table_real_names->find(tab_name);
+        return it == table_real_names->end() ? tab_name : it->second;
+    };
     // Get raw values in where clause
     for (auto &cond : conds) {
         // Infer table name from column name
@@ -344,9 +357,7 @@ void Analyze::check_clause(const std::vector<std::string> &tab_names, std::vecto
         if (!cond.is_rhs_val) {
             cond.rhs_col = check_column(all_cols, cond.rhs_col);
         }
-        auto lhs_real_it = ast::pending_tab_real_names.find(cond.lhs_col.tab_name);
-        const auto &lhs_real_tab_name =
-            lhs_real_it == ast::pending_tab_real_names.end() ? cond.lhs_col.tab_name : lhs_real_it->second;
+        std::string lhs_real_tab_name = real_table_name(cond.lhs_col.tab_name);
         TabMeta &lhs_tab = sm_manager_->db_.get_table(lhs_real_tab_name);
         auto lhs_col = lhs_tab.get_col(cond.lhs_col.col_name);
         ColType lhs_type = lhs_col->type;
@@ -358,9 +369,7 @@ void Analyze::check_clause(const std::vector<std::string> &tab_names, std::vecto
             cond.rhs_val.init_raw(lhs_col->len);
             rhs_type = cond.rhs_val.type;
         } else {
-            auto rhs_real_it = ast::pending_tab_real_names.find(cond.rhs_col.tab_name);
-            const auto &rhs_real_tab_name =
-                rhs_real_it == ast::pending_tab_real_names.end() ? cond.rhs_col.tab_name : rhs_real_it->second;
+            std::string rhs_real_tab_name = real_table_name(cond.rhs_col.tab_name);
             TabMeta &rhs_tab = sm_manager_->db_.get_table(rhs_real_tab_name);
             auto rhs_col = rhs_tab.get_col(cond.rhs_col.col_name);
             rhs_type = rhs_col->type;

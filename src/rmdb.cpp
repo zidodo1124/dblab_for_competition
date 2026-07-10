@@ -55,7 +55,6 @@ auto recovery = std::make_unique<RecoveryManager>(disk_manager.get(), buffer_poo
 auto portal = std::make_unique<Portal>(sm_manager.get());
 auto analyze = std::make_unique<Analyze>(sm_manager.get());
 pthread_mutex_t *buffer_mutex;
-pthread_mutex_t *sockfd_mutex;
 
 static jmp_buf jmpbuf;
 
@@ -279,8 +278,8 @@ void execute_parse_tree(std::shared_ptr<ast::TreeNode> parse_tree, char *data_se
 }
 
 void *client_handler(void *sock_fd) {
-    int fd = *((int *)sock_fd);
-    pthread_mutex_unlock(sockfd_mutex);
+    std::unique_ptr<int> owned_fd(static_cast<int *>(sock_fd));
+    int fd = *owned_fd;
 
     int i_recvBytes;
     // 接收客户端发送的请求
@@ -358,10 +357,16 @@ void *client_handler(void *sock_fd) {
                 sm_manager->load_table(load_command->first, load_command->second, context.get());
             } catch (RMDBError &e) {
                 std::cerr << e.what() << std::endl;
-                memcpy(data_send, e.what(), e.get_msg_len());
-                data_send[e.get_msg_len()] = '\n';
-                data_send[e.get_msg_len() + 1] = '\0';
-                offset = e.get_msg_len() + 1;
+                bool explicit_txn = context->txn_ != nullptr && context->txn_->get_txn_mode();
+                if (context->txn_ != nullptr &&
+                    context->txn_->get_state() != TransactionState::COMMITTED &&
+                    context->txn_->get_state() != TransactionState::ABORTED) {
+                    txn_manager->abort(context->txn_, log_manager.get());
+                }
+                std::string response = explicit_txn ? "abort\n" : std::string(e.what()) + "\n";
+                memcpy(data_send, response.data(), response.size());
+                data_send[response.size()] = '\0';
+                offset = response.size();
                 if (output_file_enabled.load(std::memory_order_relaxed)) {
                     std::fstream outfile;
                     outfile.open("output.txt", std::ios::out | std::ios::app);
@@ -392,7 +397,13 @@ void *client_handler(void *sock_fd) {
                 yy_delete_buffer(buf);
                 pthread_mutex_unlock(buffer_mutex);
                 if (should_report_parse_failure(data_recv)) {
-                    std::string str = "failure\n";
+                    bool explicit_txn = context->txn_ != nullptr && context->txn_->get_txn_mode();
+                    if (context->txn_ != nullptr &&
+                        context->txn_->get_state() != TransactionState::COMMITTED &&
+                        context->txn_->get_state() != TransactionState::ABORTED) {
+                        txn_manager->abort(context->txn_, log_manager.get());
+                    }
+                    std::string str = explicit_txn ? "abort\n" : "failure\n";
                     memcpy(data_send, str.c_str(), str.length());
                     data_send[str.length()] = '\0';
                     offset = str.length();
@@ -442,9 +453,7 @@ void *client_handler(void *sock_fd) {
 void start_server() {
     // init mutex
     buffer_mutex = (pthread_mutex_t *)malloc(sizeof(pthread_mutex_t));
-    sockfd_mutex = (pthread_mutex_t *)malloc(sizeof(pthread_mutex_t));
     pthread_mutex_init(buffer_mutex, nullptr);
-    pthread_mutex_init(sockfd_mutex, nullptr);
 
     int sockfd_server;
     int fd_temp;
@@ -494,7 +503,6 @@ void start_server() {
         }
 
         // Block here. Until server accepts a new connection.
-        pthread_mutex_lock(sockfd_mutex);
         int sockfd = accept(sockfd_server, (struct sockaddr *)(&s_addr_client), (socklen_t *)(&client_length));
         if (sockfd == -1) {
             std::cout << "Accept error!" << std::endl;
@@ -502,10 +510,13 @@ void start_server() {
         }
         
         // 和客户端建立连接，并开启一个线程负责处理客户端请求
-        if (pthread_create(&thread_id, nullptr, &client_handler, (void *)(&sockfd)) != 0) {
+        auto client_fd = std::make_unique<int>(sockfd);
+        if (pthread_create(&thread_id, nullptr, &client_handler, client_fd.get()) != 0) {
             std::cout << "Create thread fail!" << std::endl;
+            close(sockfd);
             break;  // break while loop
         }
+        client_fd.release();
 
     }
 

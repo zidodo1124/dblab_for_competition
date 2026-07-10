@@ -25,10 +25,14 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
     std::vector<Condition> fed_conds_;          // join条件
     std::map<std::string, std::string> tab_display_names_;
     bool isend;
+    std::unique_ptr<RmRecord> current_left_rec_;
+    std::unique_ptr<RmRecord> current_join_rec_;
 
-    std::unique_ptr<RmRecord> join_current_tuple() {
-        auto left_rec = left_->Next();
+    std::unique_ptr<RmRecord> join_current_tuple(const RmRecord *left_rec) {
         auto right_rec = right_->Next();
+        if (left_rec == nullptr || right_rec == nullptr) {
+            return nullptr;
+        }
         auto rec = std::make_unique<RmRecord>(len_);
         memcpy(rec->data, left_rec->data, left_->tupleLen());
         memcpy(rec->data + left_->tupleLen(), right_rec->data, right_->tupleLen());
@@ -36,16 +40,18 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
     }
 
     void reset_inner_for_current_outer() {
-        auto left_rec = left_->Next();
-        right_->bind_outer_tuple(fed_conds_, left_->cols(), left_rec.get());
+        current_left_rec_ = left_->Next();
+        right_->bind_outer_tuple(fed_conds_, left_->cols(), current_left_rec_.get());
         right_->beginTuple();
     }
 
     void advance_to_match() {
+        current_join_rec_.reset();
         while (!left_->is_end()) {
             while (!right_->is_end()) {
-                auto rec = join_current_tuple();
-                if (eval_conds(cols_, fed_conds_, rec.get())) {
+                auto rec = join_current_tuple(current_left_rec_.get());
+                if (rec != nullptr && eval_conds(cols_, fed_conds_, rec.get())) {
+                    current_join_rec_ = std::move(rec);
                     isend = false;
                     rows_++;
                     return;
@@ -81,6 +87,8 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
     }
 
     void beginTuple() override {
+        current_left_rec_.reset();
+        current_join_rec_.reset();
         left_->beginTuple();
         if (left_->is_end()) {
             isend = true;
@@ -101,7 +109,10 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
     }
 
     std::unique_ptr<RmRecord> Next() override {
-        return join_current_tuple();
+        if (isend || current_join_rec_ == nullptr) {
+            return nullptr;
+        }
+        return std::make_unique<RmRecord>(*current_join_rec_);
     }
 
     bool is_end() const override { return isend; }

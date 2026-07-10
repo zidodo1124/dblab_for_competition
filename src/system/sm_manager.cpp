@@ -539,6 +539,10 @@ size_t SmManager::load_table(const std::string& file_name, const std::string& ta
             }
         }
 
+        if (context != nullptr && context->txn_mgr_ != nullptr) {
+            context->txn_mgr_->check_insert_conflict(tab_name, rec, context->txn_);
+        }
+
         std::vector<std::vector<char>> keys;
         keys.reserve(tab.indexes.size());
         for (const auto &index : tab.indexes) {
@@ -551,21 +555,32 @@ size_t SmManager::load_table(const std::string& file_name, const std::string& ta
             keys.push_back(std::move(key));
         }
 
-        Rid rid = fh->insert_record(rec.data, nullptr);
+        if (context != nullptr && context->txn_mgr_ != nullptr) {
+            Rid placeholder{-1, -1};
+            context->txn_mgr_->check_ser_write(tab_name, placeholder, nullptr, &rec, context->txn_);
+        }
+
+        Rid rid;
+        if (context != nullptr && context->log_mgr_ != nullptr && context->txn_ != nullptr) {
+            rid = fh->get_next_insert_rid();
+            InsertLogRecord log_record(context->txn_->get_transaction_id(), rec, rid, tab_name);
+            lsn_t lsn = context->log_mgr_->add_log_record(&log_record, context->txn_);
+            fh->insert_record(rid, rec.data, lsn);
+        } else {
+            rid = fh->insert_record(rec.data, context);
+        }
         for (size_t i = 0; i < tab.indexes.size(); ++i) {
             const auto &index = tab.indexes[i];
             auto ih = ihs_.at(ix_manager_->get_index_name(tab_name, index.cols)).get();
             ih->insert_entry(keys[i].data(), rid, context == nullptr ? nullptr : context->txn_);
         }
+        if (context != nullptr && context->txn_ != nullptr) {
+            context->txn_->append_write_record(new WriteRecord(WType::INSERT_TUPLE, tab_name, rid));
+            if (context->txn_mgr_ != nullptr) {
+                context->txn_mgr_->append_insert_version(tab_name, rid, rec, context->txn_);
+            }
+        }
         ++loaded;
-    }
-
-    fh->flush_file_hdr();
-    buffer_pool_manager_->flush_all_pages(fh->GetFd());
-    for (const auto &index : tab.indexes) {
-        auto ih = ihs_.at(ix_manager_->get_index_name(tab_name, index.cols)).get();
-        ih->flush_file_hdr();
-        buffer_pool_manager_->flush_all_pages(ih->get_fd());
     }
     return loaded;
 }

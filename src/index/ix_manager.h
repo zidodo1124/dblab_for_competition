@@ -157,9 +157,9 @@ class IxManager {
     }
 
     void close_index(const IxIndexHandle *ih) {
+        // Keep page writes ordered after their WAL records during shutdown.
+        buffer_pool_manager_->flush_dirty_pages(ih->fd_);
         ih->flush_file_hdr();
-        // 缓冲区的所有页刷到磁盘，注意这句话必须写在close_file前面
-        buffer_pool_manager_->flush_all_pages(ih->fd_);
         disk_manager_->close_file(ih->fd_);
     }
 };

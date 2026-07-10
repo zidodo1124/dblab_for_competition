@@ -250,16 +250,24 @@ void execute_parse_tree(std::shared_ptr<ast::TreeNode> parse_tree, char *data_se
     } catch (RMDBError &e) {
         std::cerr << e.what() << std::endl;
 
+        bool explicit_txn = context->txn_ != nullptr && context->txn_->get_txn_mode();
         if (context->txn_ != nullptr &&
             context->txn_->get_state() != TransactionState::COMMITTED &&
             context->txn_->get_state() != TransactionState::ABORTED) {
             txn_manager->abort(context->txn_, log_manager.get());
         }
 
-        memcpy(data_send, e.what(), e.get_msg_len());
-        data_send[e.get_msg_len()] = '\n';
-        data_send[e.get_msg_len() + 1] = '\0';
-        offset = e.get_msg_len() + 1;
+        if (explicit_txn) {
+            const std::string response = "abort\n";
+            memcpy(data_send, response.data(), response.size());
+            data_send[response.size()] = '\0';
+            offset = response.size();
+        } else {
+            memcpy(data_send, e.what(), e.get_msg_len());
+            data_send[e.get_msg_len()] = '\n';
+            data_send[e.get_msg_len() + 1] = '\0';
+            offset = e.get_msg_len() + 1;
+        }
 
         if (output_file_enabled.load(std::memory_order_relaxed)) {
             std::fstream outfile;

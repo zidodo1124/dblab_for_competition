@@ -1,6 +1,6 @@
-#line 2 "/home/lx/rmdb/src/parser/lex.yy.cpp"
+#line 2 "/mnt/c/Users/lincom/Documents/Codex/2026-06-27/5-2026-https-gitlab-eduxiji-net/perf_work/dblab_zmy/src/parser/lex.yy.cpp"
 
-#line 4 "/home/lx/rmdb/src/parser/lex.yy.cpp"
+#line 4 "/mnt/c/Users/lincom/Documents/Codex/2026-06-27/5-2026-https-gitlab-eduxiji-net/perf_work/dblab_zmy/src/parser/lex.yy.cpp"
 
 #define  YY_INT_ALIGNED short int
 
@@ -391,7 +391,7 @@ struct yy_trans_info
 static const flex_int16_t yy_accept[295] =
     {   0,
         0,    0,    0,    0,   71,   69,    6,    7,    7,   69,
-       64,   64,   69,   69,   66,   64,   64,   65,   65,   65,
+       64,   64,   64,   69,   66,   64,   64,   65,   65,   65,
        65,   65,   65,   65,   65,   65,   65,   65,   65,   65,
        65,   65,   65,   65,   65,   65,   65,    3,    4,    6,
         7,    0,   68,   66,    5,    1,   67,   62,   63,   61,
@@ -733,9 +733,9 @@ char *yytext;
         } \
     }
 
-#line 737 "/home/lx/rmdb/src/parser/lex.yy.cpp"
+#line 737 "/mnt/c/Users/lincom/Documents/Codex/2026-06-27/5-2026-https-gitlab-eduxiji-net/perf_work/dblab_zmy/src/parser/lex.yy.cpp"
 
-#line 739 "/home/lx/rmdb/src/parser/lex.yy.cpp"
+#line 739 "/mnt/c/Users/lincom/Documents/Codex/2026-06-27/5-2026-https-gitlab-eduxiji-net/perf_work/dblab_zmy/src/parser/lex.yy.cpp"
 
 #define INITIAL 0
 #define STATE_COMMENT 1
@@ -973,7 +973,7 @@ YY_DECL
 
 #line 48 "lex.l"
     /* block comment */
-#line 977 "/home/lx/rmdb/src/parser/lex.yy.cpp"
+#line 977 "/mnt/c/Users/lincom/Documents/Codex/2026-06-27/5-2026-https-gitlab-eduxiji-net/perf_work/dblab_zmy/src/parser/lex.yy.cpp"
 
 	while ( /*CONSTCOND*/1 )		/* loops until end-of-file is reached */
 		{
@@ -1414,7 +1414,7 @@ YY_RULE_SETUP
 #line 145 "lex.l"
 ECHO;
 	YY_BREAK
-#line 1418 "/home/lx/rmdb/src/parser/lex.yy.cpp"
+#line 1418 "/mnt/c/Users/lincom/Documents/Codex/2026-06-27/5-2026-https-gitlab-eduxiji-net/perf_work/dblab_zmy/src/parser/lex.yy.cpp"
 
 	case YY_END_OF_BUFFER:
 		{

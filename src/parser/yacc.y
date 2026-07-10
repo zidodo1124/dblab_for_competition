@@ -46,6 +46,16 @@ static bool parse_compatible_isolation_pair(
     }
     return false;
 }
+
+static std::shared_ptr<Value> negate_numeric_value(std::shared_ptr<Value> value) {
+    if (auto int_lit = std::dynamic_pointer_cast<IntLit>(value)) {
+        return std::make_shared<IntLit>(-int_lit->val);
+    }
+    if (auto float_lit = std::dynamic_pointer_cast<FloatLit>(value)) {
+        return std::make_shared<FloatLit>(-float_lit->val);
+    }
+    return value;
+}
 %}
 
 // request a pure (reentrant) parser
@@ -486,6 +496,10 @@ setClause:
     |   colName '=' colName '+' value
     {
         $$ = std::make_shared<SetClause>($1, $3, $5);
+    }
+    |   colName '=' colName '-' value
+    {
+        $$ = std::make_shared<SetClause>($1, $3, negate_numeric_value($5));
     }
     |   colName '=' colName value
     {

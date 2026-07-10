@@ -51,7 +51,6 @@ class DeleteExecutor : public AbstractExecutor {
             }
             if (context_->txn_mgr_ != nullptr) {
                 context_->txn_mgr_->check_ser_write(tab_name_, rid, rec.get(), nullptr, context_->txn_);
-                context_->txn_mgr_->append_delete_version(tab_name_, rid, *rec, context_->txn_);
             }
             lsn_t lsn = INVALID_LSN;
             if (context_->log_mgr_ != nullptr && context_->txn_ != nullptr) {
@@ -70,6 +69,9 @@ class DeleteExecutor : public AbstractExecutor {
             }
             fh_->delete_record(rid, context_, lsn);
             if (context_->txn_ != nullptr) {
+                if (context_->txn_mgr_ != nullptr) {
+                    context_->txn_mgr_->append_delete_version(tab_name_, rid, *rec, context_->txn_);
+                }
                 context_->txn_->append_write_record(new WriteRecord(WType::DELETE_TUPLE, tab_name_, rid, *rec));
             }
         }

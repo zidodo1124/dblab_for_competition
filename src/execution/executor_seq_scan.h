@@ -29,11 +29,53 @@ class SeqScanExecutor : public AbstractExecutor {
     std::vector<Condition> fed_conds_;  // 同conds_，两个字段相同
 
     Rid rid_;
-    std::vector<std::pair<Rid, RmRecord>> visible_records_;
-    size_t cursor_ = 0;
+    std::unique_ptr<RmScan> scan_;
+    std::unique_ptr<RmRecord> current_record_;
+    std::vector<std::pair<Rid, RmRecord>> deleted_visible_records_;
+    size_t deleted_cursor_ = 0;
 
     SmManager *sm_manager_;
     bool count_filtered_rows_;
+
+    void advance_to_valid() {
+        while (scan_ != nullptr && !scan_->is_end()) {
+            rid_ = scan_->rid();
+            scan_->next();
+            std::unique_ptr<RmRecord> rec =
+                context_->txn_mgr_ == nullptr
+                    ? fh_->get_record(rid_, context_)
+                    : context_->txn_mgr_->get_visible_record(tab_name_, rid_, fh_, context_);
+            if (rec == nullptr) {
+                continue;
+            }
+            if (!count_filtered_rows_) {
+                rows_++;
+            }
+            if (eval_conds(cols_, fed_conds_, rec.get())) {
+                if (count_filtered_rows_) {
+                    rows_++;
+                }
+                current_record_ = std::move(rec);
+                return;
+            }
+        }
+
+        while (deleted_cursor_ < deleted_visible_records_.size()) {
+            auto &entry = deleted_visible_records_[deleted_cursor_++];
+            rid_ = entry.first;
+            if (!count_filtered_rows_) {
+                rows_++;
+            }
+            if (eval_conds(cols_, fed_conds_, &entry.second)) {
+                if (count_filtered_rows_) {
+                    rows_++;
+                }
+                current_record_ = std::make_unique<RmRecord>(entry.second);
+                return;
+            }
+        }
+        current_record_.reset();
+    }
 
    public:
     SeqScanExecutor(SmManager *sm_manager, std::string tab_name, std::vector<Condition> conds, Context *context,
@@ -63,65 +105,48 @@ class SeqScanExecutor : public AbstractExecutor {
                                                              : std::shared_lock<std::shared_mutex>();
         auto table_guard = context_->txn_mgr_ != nullptr ? context_->txn_mgr_->acquire_table_read_latch(tab_name_)
                                                          : std::shared_lock<std::shared_mutex>();
-        visible_records_.clear();
-        cursor_ = 0;
+        current_record_.reset();
+        deleted_visible_records_.clear();
+        deleted_cursor_ = 0;
+        scan_ = std::make_unique<RmScan>(fh_);
         if (context_->txn_mgr_ != nullptr) {
-            visible_records_ = context_->txn_mgr_->get_visible_records(tab_name_, fh_, context_);
-        } else {
-            for (RmScan scan(fh_); !scan.is_end(); scan.next()) {
-                auto rec = fh_->get_record(scan.rid(), context_);
-                visible_records_.emplace_back(scan.rid(), *rec);
+            // RmScan cannot visit records deleted after this transaction's snapshot.
+            // Keep only those exceptional, snapshot-visible versions in a small side list.
+            for (auto &entry : context_->txn_mgr_->get_visible_version_records(tab_name_, context_)) {
+                bool record_exists = true;
+                try {
+                    (void)fh_->get_record(entry.first, context_);
+                } catch (const RecordNotFoundError &) {
+                    record_exists = false;
+                }
+                if (!record_exists) {
+                    deleted_visible_records_.push_back(std::move(entry));
+                }
             }
         }
         if (context_->is_select_ && context_->txn_mgr_ != nullptr) {
             context_->txn_mgr_->record_select_predicate(tab_name_, fed_conds_, context_->txn_);
         }
-        while (cursor_ < visible_records_.size()) {
-            if (!count_filtered_rows_) {
-                rows_++;
-            }
-            rid_ = visible_records_[cursor_].first;
-            if (eval_conds(cols_, fed_conds_, &visible_records_[cursor_].second)) {
-                if (count_filtered_rows_) {
-                    rows_++;
-                }
-                return;
-            }
-            cursor_++;
-        }
+        advance_to_valid();
     }
 
     void nextTuple() override {
-        if (cursor_ >= visible_records_.size()) {
-            return;
-        }
-        cursor_++;
-        while (cursor_ < visible_records_.size()) {
-            if (!count_filtered_rows_) {
-                rows_++;
-            }
-            rid_ = visible_records_[cursor_].first;
-            if (eval_conds(cols_, fed_conds_, &visible_records_[cursor_].second)) {
-                if (count_filtered_rows_) {
-                    rows_++;
-                }
-                return;
-            }
-            cursor_++;
+        if (current_record_ != nullptr) {
+            advance_to_valid();
         }
     }
 
     std::unique_ptr<RmRecord> Next() override {
-        if (cursor_ >= visible_records_.size()) {
+        if (current_record_ == nullptr) {
             return nullptr;
         }
         if (context_->is_select_ && context_->txn_mgr_ != nullptr) {
             context_->txn_mgr_->record_select_record(tab_name_, rid_, context_->txn_);
         }
-        return std::make_unique<RmRecord>(visible_records_[cursor_].second);
+        return std::make_unique<RmRecord>(*current_record_);
     }
 
-    bool is_end() const override { return cursor_ >= visible_records_.size(); }
+    bool is_end() const override { return current_record_ == nullptr; }
 
     size_t tupleLen() const override { return len_; }
 

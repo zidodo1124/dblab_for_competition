@@ -576,9 +576,6 @@ size_t SmManager::load_table(const std::string& file_name, const std::string& ta
         }
         if (context != nullptr && context->txn_ != nullptr) {
             context->txn_->append_write_record(new WriteRecord(WType::INSERT_TUPLE, tab_name, rid));
-            if (context->txn_mgr_ != nullptr) {
-                context->txn_mgr_->append_insert_version(tab_name, rid, rec, context->txn_);
-            }
         }
         ++loaded;
     }

@@ -332,9 +332,9 @@ void *client_handler(void *sock_fd) {
         }
 
         // 开启事务，初始化系统所需的上下文信息（包括事务对象指针、锁管理器指针、日志管理器指针、存放结果的buffer、记录结果长度的变量）
-        Context *context = new Context(lock_manager.get(), log_manager.get(), nullptr, data_send, &offset,
-                                       txn_manager.get(), &session_isolation);
-        SetTransaction(&txn_id, context, session_isolation);
+        auto context = std::make_unique<Context>(lock_manager.get(), log_manager.get(), nullptr, data_send, &offset,
+                                                 txn_manager.get(), &session_isolation);
+        SetTransaction(&txn_id, context.get(), session_isolation);
 
         // 用于判断是否已经调用了yy_delete_buffer来删除buf
         bool finish_analyze = false;
@@ -343,7 +343,7 @@ void *client_handler(void *sock_fd) {
         if (load_command.has_value()) {
             finish_analyze = true;
             try {
-                sm_manager->load_table(load_command->first, load_command->second, context);
+                sm_manager->load_table(load_command->first, load_command->second, context.get());
             } catch (RMDBError &e) {
                 std::cerr << e.what() << std::endl;
                 memcpy(data_send, e.what(), e.get_msg_len());
@@ -360,7 +360,7 @@ void *client_handler(void *sock_fd) {
         } else if (show_index_table.has_value()) {
             auto parse_tree = std::make_shared<ast::ShowIndex>(*show_index_table);
             finish_analyze = true;
-            execute_parse_tree(std::move(parse_tree), data_send, offset, &txn_id, context);
+            execute_parse_tree(std::move(parse_tree), data_send, offset, &txn_id, context.get());
         } else {
             pthread_mutex_lock(buffer_mutex);
             ast::parse_tree.reset();
@@ -372,7 +372,7 @@ void *client_handler(void *sock_fd) {
                     yy_delete_buffer(buf);
                     finish_analyze = true;
                     pthread_mutex_unlock(buffer_mutex);
-                    execute_parse_tree(std::move(parse_tree), data_send, offset, &txn_id, context);
+                    execute_parse_tree(std::move(parse_tree), data_send, offset, &txn_id, context.get());
                 }
             }
             if(finish_analyze == false) {
@@ -407,10 +407,21 @@ void *client_handler(void *sock_fd) {
         }
     }
 
+    Transaction *txn = txn_manager->get_transaction(txn_id);
+    if (txn != nullptr && txn->get_state() != TransactionState::COMMITTED &&
+        txn->get_state() != TransactionState::ABORTED) {
+        try {
+            txn_manager->abort(txn, log_manager.get());
+        } catch (const std::exception &e) {
+            std::cerr << "Failed to roll back disconnected transaction " << txn_id << ": " << e.what() << std::endl;
+        }
+    }
+
     // Clear
     if (verbose) {
         std::cout << "Terminating current client_connection..." << std::endl;
     }
+    delete[] data_send;
     close(fd);           // close a file descriptor.
     pthread_exit(NULL);  // terminate calling thread!
 }

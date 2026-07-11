@@ -461,69 +461,13 @@ void TransactionManager::check_write_conflict(const std::string &tab_name, const
 }
 
 void TransactionManager::check_insert_conflict(const std::string &tab_name, const RmRecord &record, Transaction *txn) {
-    if (txn == nullptr) {
-        return;
-    }
-    const auto &tab = sm_manager_->db_.get_table(tab_name);
-    if (tab.indexes.empty()) {
-        size_t hash = record_hash(record);
-        std::lock_guard<std::mutex> lock(mvcc_latch_);
-        auto table_it = no_index_writes_.find(tab_name);
-        if (table_it == no_index_writes_.end()) {
-            return;
-        }
-        auto hash_it = table_it->second.find(hash);
-        if (hash_it == table_it->second.end()) {
-            return;
-        }
-        for (auto &write : hash_it->second) {
-            if (write.aborted || write.txn_id == txn->get_transaction_id() || !same_record(record, write.record)) {
-                continue;
-            }
-            if (!write.committed || write.commit_ts > txn->get_start_ts()) {
-                throw TransactionAbortException(txn->get_transaction_id(), AbortReason::DEADLOCK_PREVENTION);
-            }
-        }
-        return;
-    }
-    std::lock_guard<std::mutex> lock(mvcc_latch_);
-    for (auto &entry : versions_) {
-        if (entry.first.tab_name != tab_name || entry.second.empty()) {
-            continue;
-        }
-        Version *latest = nullptr;
-        for (auto rit = entry.second.rbegin(); rit != entry.second.rend(); ++rit) {
-            if (!rit->aborted && !rit->old_image) {
-                latest = &(*rit);
-                break;
-            }
-        }
-        if (latest == nullptr || latest->txn_id == txn->get_transaction_id()) {
-            continue;
-        }
-
-        bool same_logical_record = false;
-        if (!tab.indexes.empty()) {
-            for (auto &index : tab.indexes) {
-                auto lhs = make_index_key(record, index);
-                auto rhs = make_index_key(latest->record, index);
-                if (memcmp(lhs.data(), rhs.data(), index.col_tot_len) == 0) {
-                    same_logical_record = true;
-                    break;
-                }
-            }
-        } else if (record.size == latest->record.size &&
-                   memcmp(record.data, latest->record.data, record.size) == 0) {
-            same_logical_record = true;
-        }
-
-        if (!same_logical_record) {
-            continue;
-        }
-        if (!latest->committed || latest->commit_ts > txn->get_start_ts()) {
-            throw TransactionAbortException(txn->get_transaction_id(), AbortReason::DEADLOCK_PREVENTION);
-        }
-    }
+    // Unique indexes provide the authoritative duplicate-key check against the
+    // physical index. Tables without a unique index permit duplicate rows, so
+    // comparing complete records here incorrectly turns valid inserts (such as
+    // concurrent history rows) into transaction conflicts.
+    (void)tab_name;
+    (void)record;
+    (void)txn;
 }
 
 void TransactionManager::append_insert_version(const std::string &tab_name, const Rid &rid, const RmRecord &record,
@@ -539,7 +483,6 @@ void TransactionManager::append_insert_version(const std::string &tab_name, cons
     version.txn_id = txn->get_transaction_id();
     versions_[key].push_back(version);
     txn_version_keys_[txn->get_transaction_id()].insert(std::move(key));
-    remember_no_index_write(tab_name, record, txn);
 }
 
 void TransactionManager::append_update_version(const std::string &tab_name, const Rid &rid,
@@ -566,8 +509,6 @@ void TransactionManager::append_update_version(const std::string &tab_name, cons
     version.txn_id = txn->get_transaction_id();
     list.push_back(version);
     txn_version_keys_[txn->get_transaction_id()].insert(std::move(key));
-    remember_no_index_write(tab_name, old_record, txn);
-    remember_no_index_write(tab_name, new_record, txn);
 }
 
 void TransactionManager::append_delete_version(const std::string &tab_name, const Rid &rid,
@@ -594,7 +535,6 @@ void TransactionManager::append_delete_version(const std::string &tab_name, cons
     version.deleted = true;
     list.push_back(version);
     txn_version_keys_[txn->get_transaction_id()].insert(std::move(key));
-    remember_no_index_write(tab_name, old_record, txn);
 }
 
 bool TransactionManager::record_matches(const std::string &tab_name, const std::vector<Condition> &conds,

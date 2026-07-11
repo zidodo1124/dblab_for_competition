@@ -290,7 +290,9 @@ void *client_handler(void *sock_fd) {
     int offset = 0;
     // 记录客户端当前正在执行的事务ID
     txn_id_t txn_id = INVALID_TXN_ID;
-    IsolationLevel session_isolation = IsolationLevel::SERIALIZABLE;
+    // TPC-C transactions run under snapshot isolation unless a client explicitly
+    // selects another supported isolation level for its session.
+    IsolationLevel session_isolation = IsolationLevel::SNAPSHOT_ISOLATION;
 
     bool verbose = rmdb_verbose_logging();
     if (verbose) {

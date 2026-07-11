@@ -329,8 +329,28 @@ std::shared_ptr<Plan> Planner::make_one_rel(std::shared_ptr<Query> query)
 
     std::vector<std::string> join_order;
     std::set<std::string> remaining(tables.begin(), tables.end());
-    join_order.push_back(tables[0]);
-    remaining.erase(tables[0]);
+
+    // For an inner join, start from the most selective local access path. This
+    // lets a later join predicate complete the leading columns of a composite
+    // index on the inner table instead of scanning the first SQL table.
+    size_t first_table_pos = 0;
+    if (!query->has_explicit_join) {
+        auto access_rank = [&](size_t table_idx) {
+            auto scan = std::dynamic_pointer_cast<ScanPlan>(table_scan_executors[table_idx]);
+            bool uses_index = scan != nullptr && scan->tag == T_IndexScan;
+            const auto &tab = sm_manager_->db_.get_table(real_table_name(tables[table_idx]));
+            auto fh = sm_manager_->fhs_.find(tab.name);
+            int pages = fh == sm_manager_->fhs_.end() ? 1 : std::max(1, fh->second->get_file_hdr().num_pages);
+            return std::make_pair(uses_index ? 0 : 1, pages);
+        };
+        for (size_t i = 1; i < tables.size(); ++i) {
+            if (access_rank(i) < access_rank(first_table_pos)) {
+                first_table_pos = i;
+            }
+        }
+    }
+    join_order.push_back(tables[first_table_pos]);
+    remaining.erase(tables[first_table_pos]);
 
     bool original_inner_can_probe = false;
     for (const auto &table : remaining) {

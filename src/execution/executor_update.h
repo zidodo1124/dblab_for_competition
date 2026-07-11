@@ -35,6 +35,16 @@ class UpdateExecutor : public AbstractExecutor {
         return key;
     }
 
+    bool index_key_changed(const RmRecord &old_rec, const RmRecord &new_rec, const IndexMeta &index) {
+        for (int i = 0; i < index.col_num; ++i) {
+            const auto &col = index.cols[i];
+            if (memcmp(old_rec.data + col.offset, new_rec.data + col.offset, col.len) != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool rid_in_targets(const Rid &rid, const std::vector<Rid> &targets) {
         for (auto &target : targets) {
             if (target == rid) {
@@ -121,6 +131,9 @@ class UpdateExecutor : public AbstractExecutor {
             std::vector<std::vector<char>> new_keys;
             new_keys.reserve(new_recs.size());
             for (size_t i = 0; i < new_recs.size(); ++i) {
+                if (!index_key_changed(old_recs[i], new_recs[i], index)) {
+                    continue;
+                }
                 auto key = make_index_key(&new_recs[i], index);
                 for (auto &prev_key : new_keys) {
                     if (memcmp(prev_key.data(), key.data(), index.col_tot_len) == 0) {
@@ -148,6 +161,9 @@ class UpdateExecutor : public AbstractExecutor {
 
         for (size_t i = 0; i < target_rids.size(); ++i) {
             for (auto &index : tab_.indexes) {
+                if (!index_key_changed(old_recs[i], new_recs[i], index)) {
+                    continue;
+                }
                 auto ih = sm_manager_->ihs_.at(sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols)).get();
                 auto key = make_index_key(&old_recs[i], index);
                 ih->delete_entry(key.data(), context_->txn_);
@@ -172,6 +188,9 @@ class UpdateExecutor : public AbstractExecutor {
 
         for (size_t i = 0; i < target_rids.size(); ++i) {
             for (auto &index : tab_.indexes) {
+                if (!index_key_changed(old_recs[i], new_recs[i], index)) {
+                    continue;
+                }
                 auto ih = sm_manager_->ihs_.at(sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols)).get();
                 auto key = make_index_key(&new_recs[i], index);
                 ih->insert_entry(key.data(), target_rids[i], context_->txn_);

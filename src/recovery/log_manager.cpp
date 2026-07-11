@@ -8,6 +8,8 @@ EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
 MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 See the Mulan PSL v2 for more details. */
 
+#include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -28,6 +30,62 @@ void LogManager::ensure_lsn_initialized_unlocked() {
     }
 }
 
+LogManager::~LogManager() {
+    flush_log_to_disk();
+    {
+        std::lock_guard<std::mutex> lock(latch_);
+        stop_flush_thread_ = true;
+        flush_requested_ = true;
+    }
+    flush_cv_.notify_one();
+    if (flush_thread_.joinable()) {
+        flush_thread_.join();
+    }
+}
+
+void LogManager::request_flush_unlocked() {
+    flush_requested_ = true;
+    flush_cv_.notify_one();
+}
+
+void LogManager::flush_loop() {
+    constexpr auto kGroupCommitWindow = std::chrono::milliseconds(1);
+    std::vector<char> pending;
+    while (true) {
+        lsn_t flushed_lsn = INVALID_LSN;
+        {
+            std::unique_lock<std::mutex> lock(latch_);
+            flush_cv_.wait(lock, [&] { return stop_flush_thread_ || flush_requested_; });
+            if (stop_flush_thread_ && log_buffer_.offset_ == 0) {
+                return;
+            }
+
+            // Let concurrently arriving commits join this physical WAL write.
+            if (!stop_flush_thread_) {
+                flush_cv_.wait_for(lock, kGroupCommitWindow, [&] { return stop_flush_thread_; });
+            }
+            ensure_lsn_initialized_unlocked();
+            flush_requested_ = false;
+            if (log_buffer_.offset_ == 0) {
+                persisted_cv_.notify_all();
+                continue;
+            }
+            pending.assign(log_buffer_.buffer_, log_buffer_.buffer_ + log_buffer_.offset_);
+            flushed_lsn = next_lsn_ - 1;
+            log_buffer_.offset_ = 0;
+            buffer_space_cv_.notify_all();
+        }
+
+        disk_manager_->write_log(pending.data(), static_cast<int>(pending.size()));
+
+        {
+            std::lock_guard<std::mutex> lock(latch_);
+            persist_lsn_ = std::max(persist_lsn_, flushed_lsn);
+        }
+        persisted_cv_.notify_all();
+    }
+}
+
 /**
  * @description: 添加日志记录到日志缓冲区中，并返回日志记录号
  * @param {LogRecord*} log_record 要写入缓冲区的日志记录
@@ -41,29 +99,26 @@ lsn_t LogManager::add_log_to_buffer(LogRecord* log_record) {
  * @description: 把日志缓冲区的内容刷到磁盘中，由于目前只设置了一个缓冲区，因此需要阻塞其他日志操作
  */
 void LogManager::flush_log_to_disk() {
-    std::lock_guard<std::mutex> lock(latch_);
-    ensure_lsn_initialized_unlocked();
-    if (log_buffer_.offset_ == 0) {
-        return;
+    lsn_t target_lsn = INVALID_LSN;
+    {
+        std::lock_guard<std::mutex> lock(latch_);
+        ensure_lsn_initialized_unlocked();
+        if (log_buffer_.offset_ == 0) {
+            return;
+        }
+        target_lsn = next_lsn_ - 1;
     }
-    disk_manager_->write_log(log_buffer_.buffer_, log_buffer_.offset_);
-    if (next_lsn_ != INVALID_LSN) {
-        persist_lsn_ = next_lsn_ - 1;
-    }
-    log_buffer_.offset_ = 0;
+    flush_log_to_lsn(target_lsn);
 }
 
 void LogManager::flush_log_to_lsn(lsn_t lsn) {
-    std::lock_guard<std::mutex> lock(latch_);
+    std::unique_lock<std::mutex> lock(latch_);
     ensure_lsn_initialized_unlocked();
     if (lsn == INVALID_LSN || lsn <= persist_lsn_) {
         return;
     }
-    if (log_buffer_.offset_ > 0) {
-        disk_manager_->write_log(log_buffer_.buffer_, log_buffer_.offset_);
-        persist_lsn_ = next_lsn_ - 1;
-        log_buffer_.offset_ = 0;
-    }
+    request_flush_unlocked();
+    persisted_cv_.wait(lock, [&] { return persist_lsn_ >= lsn; });
 }
 
 lsn_t LogManager::get_persist_lsn() {
@@ -73,15 +128,14 @@ lsn_t LogManager::get_persist_lsn() {
 }
 
 lsn_t LogManager::add_log_record(LogRecord* log_record, Transaction* txn) {
-    std::lock_guard<std::mutex> lock(latch_);
+    std::unique_lock<std::mutex> lock(latch_);
     ensure_lsn_initialized_unlocked();
     bool needs_begin = txn != nullptr && txn->get_prev_lsn() == INVALID_LSN &&
                        log_record->log_type_ != LogType::begin;
     int append_size = static_cast<int>(log_record->log_tot_len_) + (needs_begin ? LOG_HEADER_SIZE : 0);
     if (log_buffer_.is_full(append_size)) {
-        disk_manager_->write_log(log_buffer_.buffer_, log_buffer_.offset_);
-        persist_lsn_ = next_lsn_ - 1;
-        log_buffer_.offset_ = 0;
+        request_flush_unlocked();
+        buffer_space_cv_.wait(lock, [&] { return !log_buffer_.is_full(append_size); });
     }
     if (needs_begin) {
         BeginLogRecord begin_record(txn->get_transaction_id());

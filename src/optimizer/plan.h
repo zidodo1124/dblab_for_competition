@@ -53,6 +53,7 @@ typedef enum PlanTag{
     T_Projection,
     T_Aggregate,
     T_Limit,
+    T_TopN,
     T_Union
 } PlanTag;
 
@@ -193,6 +194,22 @@ class LimitPlan : public Plan
         }
         ~LimitPlan(){}
         std::shared_ptr<Plan> subplan_;
+        int limit_;
+};
+
+class TopNPlan : public Plan
+{
+    public:
+        TopNPlan(PlanTag tag, std::shared_ptr<Plan> subplan, std::vector<OrderByItem> order_bys, int limit)
+        {
+            Plan::tag = tag;
+            subplan_ = std::move(subplan);
+            order_bys_ = std::move(order_bys);
+            limit_ = limit;
+        }
+        ~TopNPlan(){}
+        std::shared_ptr<Plan> subplan_;
+        std::vector<OrderByItem> order_bys_;
         int limit_;
 };
 

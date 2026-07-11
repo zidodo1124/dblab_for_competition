@@ -179,8 +179,8 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
     }
     if (log_manager != nullptr && txn->get_first_write_lsn() != INVALID_LSN) {
         CommitLogRecord log_record(txn->get_transaction_id());
-        log_manager->add_log_record(&log_record, txn);
-        log_manager->flush_log_to_disk();
+        lsn_t commit_lsn = log_manager->add_log_record(&log_record, txn);
+        log_manager->flush_log_to_lsn(commit_lsn);
     }
     txn->set_state(TransactionState::COMMITTED);
     {
@@ -259,8 +259,8 @@ void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
     }
     if (log_manager != nullptr && txn->get_first_write_lsn() != INVALID_LSN) {
         AbortLogRecord log_record(txn->get_transaction_id());
-        log_manager->add_log_record(&log_record, txn);
-        log_manager->flush_log_to_disk();
+        lsn_t abort_lsn = log_manager->add_log_record(&log_record, txn);
+        log_manager->flush_log_to_lsn(abort_lsn);
     }
     txn->set_state(TransactionState::ABORTED);
     cleanup_abort(txn);

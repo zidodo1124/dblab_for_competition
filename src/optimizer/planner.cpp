@@ -242,8 +242,68 @@ void promote_inner_index_scan(const std::shared_ptr<Plan> &plan, const std::vect
 
 std::shared_ptr<Query> Planner::logical_optimization(std::shared_ptr<Query> query, Context *context)
 {
-   
-    //TODO 实现逻辑优化规则
+    (void)context;
+
+    // Propagate equality constants through inner-join equivalence classes.  This
+    // makes predicates such as customer.c_w_id = warehouse.w_id AND
+    // warehouse.w_id = 1 usable by customer(c_w_id, c_d_id, c_id) before the
+    // join starts.  Only equality predicates participate, so range and NULL
+    // semantics are left untouched.
+    auto same_col = [](const TabCol &lhs, const TabCol &rhs) {
+        return lhs.tab_name == rhs.tab_name && lhs.col_name == rhs.col_name;
+    };
+    auto has_value_equality = [&](const TabCol &target) {
+        return std::any_of(query->conds.begin(), query->conds.end(), [&](const Condition &cond) {
+            return cond.is_rhs_val && cond.op == OP_EQ && same_col(cond.lhs_col, target);
+        });
+    };
+    auto column_len = [&](const TabCol &target) {
+        auto real_it = query->table_real_names.find(target.tab_name);
+        const std::string &real_table = real_it == query->table_real_names.end() ? target.tab_name : real_it->second;
+        return sm_manager_->db_.get_table(real_table).get_col(target.col_name)->len;
+    };
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        const size_t cond_count = query->conds.size();
+        for (size_t value_idx = 0; value_idx < cond_count; ++value_idx) {
+            const auto &value_cond = query->conds[value_idx];
+            if (!value_cond.is_rhs_val || value_cond.op != OP_EQ) {
+                continue;
+            }
+            for (size_t join_idx = 0; join_idx < cond_count; ++join_idx) {
+                const auto &join_cond = query->conds[join_idx];
+                if (join_cond.is_rhs_val || join_cond.op != OP_EQ) {
+                    continue;
+                }
+                TabCol target;
+                if (same_col(join_cond.lhs_col, value_cond.lhs_col)) {
+                    target = join_cond.rhs_col;
+                } else if (same_col(join_cond.rhs_col, value_cond.lhs_col)) {
+                    target = join_cond.lhs_col;
+                } else {
+                    continue;
+                }
+                if (has_value_equality(target)) {
+                    continue;
+                }
+                Condition derived = value_cond;
+                derived.lhs_col = target;
+                // Value owns a type-specific encoded buffer.  A copied predicate
+                // shares the source buffer, but the derived column needs its own
+                // encoding (and may have a different fixed string width).
+                derived.rhs_val.raw.reset();
+                derived.rhs_val.init_raw(column_len(target));
+                query->conds.push_back(std::move(derived));
+                changed = true;
+                break;
+            }
+            if (changed) {
+                break;
+            }
+        }
+    }
 
     return query;
 }
@@ -492,6 +552,9 @@ std::shared_ptr<Plan> Planner::generate_sort_plan(std::shared_ptr<Query> query, 
         order.col = sel_col;
         order_bys.push_back(order);
     }
+    if (query->has_limit && query->limit >= 0 && query->limit <= 128) {
+        return std::make_shared<TopNPlan>(T_TopN, std::move(plan), std::move(order_bys), query->limit);
+    }
     return std::make_shared<SortPlan>(T_Sort, std::move(plan), std::move(order_bys));
 }
 
@@ -504,27 +567,7 @@ std::shared_ptr<Plan> Planner::generate_sort_plan(std::shared_ptr<Query> query, 
  * @param conds select plan 选取条件
  */
 std::shared_ptr<Plan> Planner::generate_select_plan(std::shared_ptr<Query> query, Context *context) {
-    //逻辑优化
-    query = logical_optimization(std::move(query), context);
-
-    if (query->has_aggregation) {
-        std::shared_ptr<Plan> plannerRoot = make_one_rel(query);
-        return std::make_shared<AggregatePlan>(T_Aggregate, std::move(plannerRoot),
-                                               query->select_items, query->group_cols, query->having_conds,
-                                               query->order_bys, query->has_limit, query->limit);
-    }
-
-    //物理优化
-    auto sel_cols = query->cols;
-    std::shared_ptr<Plan> plannerRoot = physical_optimization(query, context);
-    plannerRoot = generate_sort_plan(query, std::move(plannerRoot));
-    plannerRoot = std::make_shared<ProjectionPlan>(T_Projection, std::move(plannerRoot),
-                                                        std::move(sel_cols));
-    if (query->has_limit) {
-        plannerRoot = std::make_shared<LimitPlan>(T_Limit, std::move(plannerRoot), query->limit);
-    }
-
-    return plannerRoot;
+    return generate_optimized_select_plan(std::move(query), context);
 }
 
 std::shared_ptr<Plan> Planner::generate_union_plan(std::shared_ptr<Query> query, Context *context) {
@@ -659,12 +702,17 @@ size_t estimate_local_rows(SmManager *sm_manager, const std::string &real_table,
                            const std::string &logical_table,
                            const std::vector<Condition> &conds,
                            Context *context) {
-    SeqScanExecutor scan(sm_manager, real_table, conds, context, true, logical_table, real_table);
-    size_t rows = 0;
-    for (scan.beginTuple(); !scan.is_end(); scan.nextTuple()) {
-        ++rows;
+    // Planning must remain cheap on TPC-C-sized tables.  The file header gives
+    // a stable cardinality proxy without executing a full table scan per join.
+    (void)logical_table;
+    (void)conds;
+    (void)context;
+    auto it = sm_manager->fhs_.find(real_table);
+    if (it == sm_manager->fhs_.end()) {
+        return 1;
     }
-    return rows;
+    const auto &hdr = it->second->get_file_hdr();
+    return std::max<size_t>(1, static_cast<size_t>(hdr.num_pages) * hdr.num_records_per_page);
 }
 
 int join_condition_count_between(const std::vector<Condition> &join_conds,
@@ -813,7 +861,8 @@ std::shared_ptr<Plan> build_join_plan_for_order(
 
 }  // namespace
 
-std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Query> query, Context *context) {
+std::shared_ptr<Plan> Planner::generate_optimized_select_plan(std::shared_ptr<Query> query, Context *context) {
+    query = logical_optimization(std::move(query), context);
     std::map<std::string, std::vector<Condition>> local_conds;
     std::vector<Condition> join_conds;
     std::vector<Condition> post_join_conds;
@@ -914,14 +963,14 @@ std::shared_ptr<Plan> Planner::generate_explain_analyze_plan(std::shared_ptr<Que
                                                 false, query->tab_display_names);
     }
     root = generate_sort_plan(query, std::move(root));
-    if (query->has_limit) {
+    if (query->has_limit && (query->order_bys.empty() || query->limit > 128)) {
         root = std::make_shared<LimitPlan>(T_Limit, std::move(root), query->limit);
     }
 
+    // The final projection is part of the SQL result contract: its column
+    // order must remain exactly the SELECT-list order.  Internal projections
+    // may reorder columns for join construction, but this boundary must not.
     auto root_cols = query->cols;
-    if (!query->select_all) {
-        sort_cols_for_display(root_cols, query->tab_display_names);
-    }
     return std::make_shared<ProjectionPlan>(T_Projection, std::move(root), root_cols, query->select_all,
                                             query->tab_display_names);
 }
@@ -1008,7 +1057,7 @@ std::shared_ptr<Plan> Planner::do_planner(std::shared_ptr<Query> query, Context 
         std::shared_ptr<plannerInfo> root = std::make_shared<plannerInfo>(x);
         // 生成select语句的查询执行计划
         if (query->is_explain_analyze) {
-            std::shared_ptr<Plan> projection = generate_explain_analyze_plan(std::move(query), context);
+            std::shared_ptr<Plan> projection = generate_optimized_select_plan(std::move(query), context);
             plannerRoot = std::make_shared<DMLPlan>(T_ExplainAnalyze, projection, std::string(), std::vector<Value>(),
                                                     std::vector<Condition>(), std::vector<SetClause>());
         } else {

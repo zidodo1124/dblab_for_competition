@@ -60,7 +60,10 @@ void release_delete_reservations(Transaction *txn, SmManager *sm_manager) {
  * @param {LogManager*} log_manager 日志管理器指针
  */
 Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manager) {
-    auto write_guard = acquire_write_latch();
+    // A checkpoint needs to exclude the transition into the active set, but a
+    // new transaction does not mutate database pages.  Sharing the operation
+    // latch keeps that checkpoint boundary while allowing concurrent BEGINs.
+    auto operation_guard = acquire_operation_latch();
     (void)log_manager;
     if (txn == nullptr) {
         txn = new Transaction(next_txn_id_++);
@@ -195,10 +198,23 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
  * @param {LogManager} *log_manager 日志管理器指针
  */
 void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
-    auto write_guard = acquire_write_latch();
     if (txn == nullptr) {
         return;
     }
+
+    // Most TPC-C conflicts are detected by the first write attempt.  Such a
+    // transaction has not changed a page or appended WAL, so it only needs
+    // MVCC bookkeeping cleanup.  Do not serialize that cleanup against every
+    // other operation with the checkpoint/rollback-exclusive latch.
+    if (txn->get_state() != TransactionState::COMMITTED && txn->get_write_set()->empty() &&
+        txn->get_first_write_lsn() == INVALID_LSN) {
+        auto operation_guard = acquire_operation_latch();
+        txn->set_state(TransactionState::ABORTED);
+        cleanup_abort(txn);
+        return;
+    }
+
+    auto write_guard = acquire_write_latch();
     if (txn->get_state() == TransactionState::ABORTED) {
         cleanup_abort(txn);
         return;

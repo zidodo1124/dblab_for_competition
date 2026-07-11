@@ -10,7 +10,9 @@ See the Mulan PSL v2 for more details. */
 
 #include "lru_replacer.h"
 
-LRUReplacer::LRUReplacer(size_t num_pages) { max_size_ = num_pages; }
+LRUReplacer::LRUReplacer(size_t num_pages)
+    : prev_(num_pages, INVALID_FRAME_ID), next_(num_pages, INVALID_FRAME_ID), evictable_(num_pages, false),
+      max_size_(num_pages) {}
 
 LRUReplacer::~LRUReplacer() = default;  
 
@@ -24,12 +26,11 @@ bool LRUReplacer::victim(frame_id_t* frame_id) {
     // 它能够避免死锁发生，其构造函数能够自动进行上锁操作，析构函数会对互斥量进行解锁操作，保证线程安全。
     std::scoped_lock lock{latch_};  //  如果编译报错可以替换成其他lock
 
-    if (LRUlist_.empty()) {
+    if (tail_ == INVALID_FRAME_ID) {
         return false;
     }
-    *frame_id = LRUlist_.back();
-    LRUhash_.erase(*frame_id);
-    LRUlist_.pop_back();
+    *frame_id = tail_;
+    remove(*frame_id);
     return true;
 }
 
@@ -39,12 +40,10 @@ bool LRUReplacer::victim(frame_id_t* frame_id) {
  */
 void LRUReplacer::pin(frame_id_t frame_id) {
     std::scoped_lock lock{latch_};
-    auto it = LRUhash_.find(frame_id);
-    if (it == LRUhash_.end()) {
+    if (frame_id < 0 || static_cast<size_t>(frame_id) >= max_size_ || !evictable_[frame_id]) {
         return;
     }
-    LRUlist_.erase(it->second);
-    LRUhash_.erase(it);
+    remove(frame_id);
 }
 
 /**
@@ -53,11 +52,19 @@ void LRUReplacer::pin(frame_id_t frame_id) {
  */
 void LRUReplacer::unpin(frame_id_t frame_id) {
     std::scoped_lock lock{latch_};
-    if (LRUhash_.count(frame_id) || LRUlist_.size() >= max_size_) {
+    if (frame_id < 0 || static_cast<size_t>(frame_id) >= max_size_ || evictable_[frame_id] || size_ >= max_size_) {
         return;
     }
-    LRUlist_.push_front(frame_id);
-    LRUhash_[frame_id] = LRUlist_.begin();
+    prev_[frame_id] = INVALID_FRAME_ID;
+    next_[frame_id] = head_;
+    if (head_ != INVALID_FRAME_ID) {
+        prev_[head_] = frame_id;
+    } else {
+        tail_ = frame_id;
+    }
+    head_ = frame_id;
+    evictable_[frame_id] = true;
+    ++size_;
 }
 
 /**
@@ -65,5 +72,24 @@ void LRUReplacer::unpin(frame_id_t frame_id) {
  */
 size_t LRUReplacer::Size() {
     std::scoped_lock lock{latch_};
-    return LRUlist_.size();
+    return size_;
+}
+
+void LRUReplacer::remove(frame_id_t frame_id) {
+    frame_id_t prev = prev_[frame_id];
+    frame_id_t next = next_[frame_id];
+    if (prev != INVALID_FRAME_ID) {
+        next_[prev] = next;
+    } else {
+        head_ = next;
+    }
+    if (next != INVALID_FRAME_ID) {
+        prev_[next] = prev;
+    } else {
+        tail_ = prev;
+    }
+    prev_[frame_id] = INVALID_FRAME_ID;
+    next_[frame_id] = INVALID_FRAME_ID;
+    evictable_[frame_id] = false;
+    --size_;
 }

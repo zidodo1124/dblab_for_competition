@@ -10,13 +10,11 @@ See the Mulan PSL v2 for more details. */
 
 #pragma once
 
-#include <list>
-#include <mutex>  
+#include <mutex>
 #include <vector>
 
 #include "common/config.h"
 #include "replacer/replacer.h"
-#include "unordered_map"
 
 /*
 LRUReplacer实现了LRU替换策略
@@ -40,8 +38,16 @@ class LRUReplacer : public Replacer {
     size_t Size();
 
    private:
+    void remove(frame_id_t frame_id);
+
     std::mutex latch_;                  // 互斥锁
-    std::list<frame_id_t> LRUlist_;     // 按加入的时间顺序存放unpinned pages的frame id，首部表示最近被访问
-    std::unordered_map<frame_id_t, std::list<frame_id_t>::iterator> LRUhash_;   // frame_id_t -> unpinned pages的frame id
+    // Frame identifiers are dense buffer-pool slots. Preallocated links avoid
+    // allocating a list node and updating a hash table on every pin/unpin.
+    std::vector<frame_id_t> prev_;
+    std::vector<frame_id_t> next_;
+    std::vector<bool> evictable_;
+    frame_id_t head_{INVALID_FRAME_ID};
+    frame_id_t tail_{INVALID_FRAME_ID};
+    size_t size_{0};
     size_t max_size_;   // 最大容量（与缓冲池的容量相同）
 };

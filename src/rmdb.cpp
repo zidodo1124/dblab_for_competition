@@ -17,12 +17,14 @@ See the Mulan PSL v2 for more details. */
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <map>
 #include <optional>
 #include <set>
 #include <sstream>
+#include <thread>
 #include <vector>
 
 #include "errors.h"
@@ -232,12 +234,24 @@ void execute_parse_tree(std::shared_ptr<ast::TreeNode> parse_tree, char *data_se
         portal->run(portalStmt, ql_manager.get(), txn_id, context);
         portal->drop();
     } catch (TransactionAbortException &e) {
+        const bool early_retry_conflict =
+            e.GetAbortReason() == AbortReason::DEADLOCK_PREVENTION && context->txn_ != nullptr &&
+            context->txn_->get_write_set()->empty() && context->txn_->get_first_write_lsn() == INVALID_LSN;
         std::string str = "abort\n";
         memcpy(data_send, str.c_str(), str.length());
         data_send[str.length()] = '\0';
         offset = str.length();
 
         txn_manager->abort(context->txn_, log_manager.get());
+        if (early_retry_conflict) {
+            // Desynchronize clients that immediately retry the same hot row.
+            constexpr int kBaseBackoffUs = 500;
+            constexpr int kBackoffStepUs = 500;
+            constexpr int kBackoffSlots = 4;
+            const int delay_us = kBaseBackoffUs +
+                                 static_cast<int>(e.get_transaction_id() % kBackoffSlots) * kBackoffStepUs;
+            std::this_thread::sleep_for(std::chrono::microseconds(delay_us));
+        }
         std::cout << e.GetInfo() << std::endl;
 
         if (output_file_enabled.load(std::memory_order_relaxed)) {

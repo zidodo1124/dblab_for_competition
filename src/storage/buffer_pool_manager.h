@@ -30,6 +30,8 @@ class BufferPoolManager {
     size_t pool_size_;      // buffer_pool中可容纳页面的个数，即帧的个数
     Page *pages_;           // buffer_pool中的Page对象数组，在构造空间中申请内存空间，在析构函数中释放，大小为BUFFER_POOL_SIZE
     std::unordered_map<PageId, frame_id_t, PageIdHash> page_table_; // 帧号和页面号的映射哈希表，用于根据页面的PageId定位该页面的帧编号
+    PageId last_page_id_{-1, INVALID_PAGE_ID};
+    frame_id_t last_frame_id_{INVALID_FRAME_ID};
     std::list<frame_id_t> free_list_;   // 空闲帧编号的链表
     DiskManager *disk_manager_;
     LogManager *log_manager_{nullptr};

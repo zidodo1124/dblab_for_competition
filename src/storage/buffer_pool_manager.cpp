@@ -53,6 +53,10 @@ void BufferPoolManager::update_page(Page *page, PageId new_page_id, frame_id_t n
             page->is_dirty_ = false;
         }
         page_table_.erase(old_page_id);
+        if (last_page_id_ == old_page_id) {
+            last_page_id_ = PageId{-1, INVALID_PAGE_ID};
+            last_frame_id_ = INVALID_FRAME_ID;
+        }
     }
     page->reset_memory();
     page->id_ = new_page_id;
@@ -60,6 +64,8 @@ void BufferPoolManager::update_page(Page *page, PageId new_page_id, frame_id_t n
     page->pin_count_ = 0;
     if (new_page_id.page_no != INVALID_PAGE_ID) {
         page_table_[new_page_id] = new_frame_id;
+        last_page_id_ = new_page_id;
+        last_frame_id_ = new_frame_id;
     }
 }
 
@@ -72,9 +78,18 @@ void BufferPoolManager::update_page(Page *page, PageId new_page_id, frame_id_t n
  */
 Page* BufferPoolManager::fetch_page(PageId page_id) {
     std::scoped_lock lock{latch_};
+    if (last_page_id_ == page_id && last_frame_id_ != INVALID_FRAME_ID &&
+        pages_[last_frame_id_].get_page_id() == page_id) {
+        Page *page = &pages_[last_frame_id_];
+        page->pin_count_++;
+        replacer_->pin(last_frame_id_);
+        return page;
+    }
     auto it = page_table_.find(page_id);
     if (it != page_table_.end()) {
         Page *page = &pages_[it->second];
+        last_page_id_ = page_id;
+        last_frame_id_ = it->second;
         page->pin_count_++;
         replacer_->pin(it->second);
         return page;
@@ -102,18 +117,27 @@ Page* BufferPoolManager::fetch_page(PageId page_id) {
  */
 bool BufferPoolManager::unpin_page(PageId page_id, bool is_dirty) {
     std::scoped_lock lock{latch_};
-    auto it = page_table_.find(page_id);
-    if (it == page_table_.end()) {
-        return false;
+    frame_id_t frame_id = INVALID_FRAME_ID;
+    if (last_page_id_ == page_id && last_frame_id_ != INVALID_FRAME_ID &&
+        pages_[last_frame_id_].get_page_id() == page_id) {
+        frame_id = last_frame_id_;
+    } else {
+        auto it = page_table_.find(page_id);
+        if (it == page_table_.end()) {
+            return false;
+        }
+        frame_id = it->second;
+        last_page_id_ = page_id;
+        last_frame_id_ = frame_id;
     }
-    Page *page = &pages_[it->second];
+    Page *page = &pages_[frame_id];
     if (page->pin_count_ <= 0) {
         return false;
     }
     page->is_dirty_ = page->is_dirty_ || is_dirty;
     page->pin_count_--;
     if (page->pin_count_ == 0) {
-        replacer_->unpin(it->second);
+        replacer_->unpin(frame_id);
     }
     return true;
 }
@@ -186,6 +210,10 @@ bool BufferPoolManager::delete_page(PageId page_id) {
         write_page_to_disk(page, page_id, true);
     }
     page_table_.erase(it);
+    if (last_page_id_ == page_id) {
+        last_page_id_ = PageId{-1, INVALID_PAGE_ID};
+        last_frame_id_ = INVALID_FRAME_ID;
+    }
     replacer_->pin(frame_id);
     page->reset_memory();
     page->id_ = PageId{page_id.fd, INVALID_PAGE_ID};

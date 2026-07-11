@@ -20,6 +20,16 @@ RmScan::RmScan(const RmFileHandle *file_handle) : file_handle_(file_handle) {
     next();
 }
 
+RmScan::~RmScan() { release_page(); }
+
+void RmScan::release_page() {
+    if (page_ != nullptr) {
+        file_handle_->buffer_pool_manager_->unpin_page(page_->get_page_id(), false);
+        page_ = nullptr;
+        pinned_page_no_ = RM_NO_PAGE;
+    }
+}
+
 /**
  * @brief 找到文件中下一个存放了记录的位置
  */
@@ -27,13 +37,19 @@ void RmScan::next() {
     int page_no = rid_.page_no;
     int slot_no = rid_.slot_no;
     while (page_no < file_handle_->file_hdr_.num_pages) {
-        RmPageHandle page_handle = file_handle_->fetch_page_handle(page_no);
+        if (page_ == nullptr || pinned_page_no_ != page_no) {
+            release_page();
+            RmPageHandle page_handle = file_handle_->fetch_page_handle(page_no);
+            page_ = page_handle.page;
+            pinned_page_no_ = page_no;
+        }
+        RmPageHandle page_handle(&file_handle_->file_hdr_, page_);
         slot_no = Bitmap::next_bit(true, page_handle.bitmap, file_handle_->file_hdr_.num_records_per_page, slot_no);
-        file_handle_->buffer_pool_manager_->unpin_page(page_handle.page->get_page_id(), false);
         if (slot_no < file_handle_->file_hdr_.num_records_per_page) {
             rid_ = {page_no, slot_no};
             return;
         }
+        release_page();
         page_no++;
         slot_no = -1;
     }

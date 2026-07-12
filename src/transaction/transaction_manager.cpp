@@ -447,7 +447,24 @@ std::vector<std::pair<Rid, RmRecord>> TransactionManager::get_visible_version_re
             continue;
         }
         Version *visible = visible_version(*versions, context->txn_);
-        if (visible != nullptr && !visible->deleted && (!filter || filter(rid, visible->record))) {
+        if (visible == nullptr || visible->deleted) {
+            continue;
+        }
+
+        // The physical heap and indexes already expose the latest version.
+        // This side scan exists only to restore a version hidden by a later
+        // write that is not visible to the current transaction's snapshot.
+        Version *latest = nullptr;
+        for (auto it = versions->rbegin(); it != versions->rend(); ++it) {
+            if (!it->aborted && !it->old_image) {
+                latest = &*it;
+                break;
+            }
+        }
+        if (visible == latest) {
+            continue;
+        }
+        if (!filter || filter(rid, visible->record)) {
             result.emplace_back(rid, visible->record);
         }
     }

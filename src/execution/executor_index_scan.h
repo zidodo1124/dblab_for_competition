@@ -280,7 +280,10 @@ class IndexScanExecutor : public AbstractExecutor {
             }
         }
         if (needs_snapshot_visible_scan()) {
-            auto version_records = context_->txn_mgr_->get_visible_version_records(tab_name_, context_);
+            auto version_records = context_->txn_mgr_->get_visible_version_records(
+                tab_name_, context_, [this, &seen](const Rid &rid, const RmRecord &record) {
+                    return seen.count(rid) == 0 && eval_conds(cols_, current_scan_conds_, &record);
+                });
             for (auto &entry : version_records) {
                 if (seen.insert(entry.first).second) {
                     visible_records_.push_back(std::move(entry));

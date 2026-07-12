@@ -97,6 +97,14 @@ class Server:
         self.log_file = None
 
     def start(self, reset=False):
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(("127.0.0.1", self.port))
+        except OSError as exc:
+            raise RuntimeError(f"port {self.port} is already in use; choose another --port or stop its RMDB server") from exc
+        finally:
+            probe.close()
         if reset:
             shutil.rmtree(self.db_path, ignore_errors=True)
         env = os.environ.copy()

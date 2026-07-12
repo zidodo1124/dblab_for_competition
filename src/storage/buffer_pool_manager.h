@@ -13,6 +13,7 @@ See the Mulan PSL v2 for more details. */
 #include <unistd.h>
 
 #include <cassert>
+#include <atomic>
 #include <list>
 #include <unordered_map>
 #include <vector>
@@ -24,6 +25,14 @@ See the Mulan PSL v2 for more details. */
 #include "replacer/replacer.h"
 
 class LogManager;
+
+struct BufferPoolStats {
+    uint64_t fetches{0};
+    uint64_t hits{0};
+    uint64_t misses{0};
+    uint64_t evictions{0};
+    uint64_t failed_fetches{0};
+};
 
 class BufferPoolManager {
    private:
@@ -37,6 +46,11 @@ class BufferPoolManager {
     LogManager *log_manager_{nullptr};
     Replacer *replacer_;    // buffer_pool的置换策略，当前赛题中为LRU置换策略
     std::mutex latch_;      // 用于共享数据结构的并发控制
+    std::atomic<uint64_t> fetches_{0};
+    std::atomic<uint64_t> hits_{0};
+    std::atomic<uint64_t> misses_{0};
+    std::atomic<uint64_t> evictions_{0};
+    std::atomic<uint64_t> failed_fetches_{0};
 
    public:
     BufferPoolManager(size_t pool_size, DiskManager *disk_manager)
@@ -84,6 +98,12 @@ class BufferPoolManager {
     void flush_dirty_pages(int fd);
     void flush_dirty_pages(const std::vector<int> &fds, bool ensure_wal = true);
     void flush_dirty_pages();
+
+    BufferPoolStats stats() const {
+        return {fetches_.load(std::memory_order_relaxed), hits_.load(std::memory_order_relaxed),
+                misses_.load(std::memory_order_relaxed), evictions_.load(std::memory_order_relaxed),
+                failed_fetches_.load(std::memory_order_relaxed)};
+    }
 
    private:
     bool find_victim_page(frame_id_t* frame_id);

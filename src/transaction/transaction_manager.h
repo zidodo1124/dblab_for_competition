@@ -16,6 +16,7 @@ See the Mulan PSL v2 for more details. */
 #include <unordered_set>
 #include <optional>
 #include <functional>
+#include <chrono>
 #include <memory>
 #include <shared_mutex>
 
@@ -30,6 +31,17 @@ class Context;
 
 /* 系统采用的并发控制算法，当前题目中要求两阶段封锁并发控制算法 */
 enum class ConcurrencyMode { TWO_PHASE_LOCKING = 0, BASIC_TO, MVCC };
+
+struct TransactionLatchStats {
+    uint64_t operation_requests{0};
+    uint64_t operation_wait_us{0};
+    uint64_t write_requests{0};
+    uint64_t write_wait_us{0};
+    uint64_t table_read_requests{0};
+    uint64_t table_read_wait_us{0};
+    uint64_t table_write_requests{0};
+    uint64_t table_write_wait_us{0};
+};
 
 /// 版本链中的第一个撤销链接，将表堆元组链接到撤销日志。
 struct VersionUndoLink {
@@ -97,19 +109,45 @@ public:
     std::vector<txn_id_t> active_txn_ids(txn_id_t exclude_txn_id = INVALID_TXN_ID);
     std::vector<CheckpointTxnInfo> active_txn_infos(txn_id_t exclude_txn_id = INVALID_TXN_ID);
     std::unique_lock<std::shared_mutex> acquire_write_latch() {
-        return std::unique_lock<std::shared_mutex>(write_latch_);
+        auto started = std::chrono::steady_clock::now();
+        std::unique_lock<std::shared_mutex> guard(write_latch_);
+        write_requests_.fetch_add(1, std::memory_order_relaxed);
+        write_wait_us_.fetch_add(elapsed_us(started), std::memory_order_relaxed);
+        return guard;
     }
     std::shared_lock<std::shared_mutex> acquire_read_latch() {
-        return std::shared_lock<std::shared_mutex>(write_latch_);
+        auto started = std::chrono::steady_clock::now();
+        std::shared_lock<std::shared_mutex> guard(write_latch_);
+        operation_requests_.fetch_add(1, std::memory_order_relaxed);
+        operation_wait_us_.fetch_add(elapsed_us(started), std::memory_order_relaxed);
+        return guard;
     }
     std::shared_lock<std::shared_mutex> acquire_operation_latch() {
-        return std::shared_lock<std::shared_mutex>(write_latch_);
+        return acquire_read_latch();
     }
     std::shared_lock<std::shared_mutex> acquire_table_read_latch(const std::string &tab_name) {
-        return std::shared_lock<std::shared_mutex>(*table_latch(tab_name));
+        auto latch = table_latch(tab_name);
+        auto started = std::chrono::steady_clock::now();
+        std::shared_lock<std::shared_mutex> guard(*latch);
+        table_read_requests_.fetch_add(1, std::memory_order_relaxed);
+        table_read_wait_us_.fetch_add(elapsed_us(started), std::memory_order_relaxed);
+        return guard;
     }
     std::unique_lock<std::shared_mutex> acquire_table_write_latch(const std::string &tab_name) {
-        return std::unique_lock<std::shared_mutex>(*table_latch(tab_name));
+        auto latch = table_latch(tab_name);
+        auto started = std::chrono::steady_clock::now();
+        std::unique_lock<std::shared_mutex> guard(*latch);
+        table_write_requests_.fetch_add(1, std::memory_order_relaxed);
+        table_write_wait_us_.fetch_add(elapsed_us(started), std::memory_order_relaxed);
+        return guard;
+    }
+
+    TransactionLatchStats latch_stats() const {
+        return {operation_requests_.load(std::memory_order_relaxed), operation_wait_us_.load(std::memory_order_relaxed),
+                write_requests_.load(std::memory_order_relaxed), write_wait_us_.load(std::memory_order_relaxed),
+                table_read_requests_.load(std::memory_order_relaxed),
+                table_read_wait_us_.load(std::memory_order_relaxed),
+                table_write_requests_.load(std::memory_order_relaxed), table_write_wait_us_.load(std::memory_order_relaxed)};
     }
 
     /**
@@ -277,7 +315,20 @@ private:
     std::unordered_map<txn_id_t, TxnSerState> ser_states_;
     std::unordered_map<txn_id_t, timestamp_t> committed_ts_;
     std::unordered_map<txn_id_t, std::unordered_set<txn_id_t>> rw_edges_;
+    std::atomic<uint64_t> operation_requests_{0};
+    std::atomic<uint64_t> operation_wait_us_{0};
+    std::atomic<uint64_t> write_requests_{0};
+    std::atomic<uint64_t> write_wait_us_{0};
+    std::atomic<uint64_t> table_read_requests_{0};
+    std::atomic<uint64_t> table_read_wait_us_{0};
+    std::atomic<uint64_t> table_write_requests_{0};
+    std::atomic<uint64_t> table_write_wait_us_{0};
 
     std::atomic<timestamp_t> last_commit_ts_{0};    // 最后提交的时间戳,仅用于MVCC
     Watermark running_txns_{0};             // 存储所有正在运行事务的读取时间戳，以便于垃圾回收，仅用于MVCC
+
+    static uint64_t elapsed_us(std::chrono::steady_clock::time_point started) {
+        return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - started).count());
+    }
 };

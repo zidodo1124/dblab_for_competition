@@ -40,6 +40,8 @@ See the Mulan PSL v2 for more details. */
 #define MAX_CONN_LIMIT 8
 
 static bool should_exit = false;
+static std::atomic<uint64_t> parser_lock_requests{0};
+static std::atomic<uint64_t> parser_lock_wait_us{0};
 
 // 构建全局所需的管理器对象
 auto disk_manager = std::make_unique<DiskManager>();
@@ -187,6 +189,36 @@ std::string normalized_command(const char *sql) {
 
 bool handle_fast_utility_command(const char *sql, char *data_send, int &offset) {
     std::string command = normalized_command(sql);
+    if (command == "show perf stats") {
+        const auto buffer_stats = buffer_pool_manager->stats();
+        const auto latch_stats = txn_manager->latch_stats();
+        const double hit_ratio = buffer_stats.fetches == 0
+                                     ? 0.0
+                                     : static_cast<double>(buffer_stats.hits) / static_cast<double>(buffer_stats.fetches);
+        std::ostringstream os;
+        os << "buffer_pool.fetches=" << buffer_stats.fetches << '\n'
+           << "buffer_pool.hits=" << buffer_stats.hits << '\n'
+           << "buffer_pool.misses=" << buffer_stats.misses << '\n'
+           << "buffer_pool.evictions=" << buffer_stats.evictions << '\n'
+           << "buffer_pool.failed_fetches=" << buffer_stats.failed_fetches << '\n'
+           << "buffer_pool.hit_ratio=" << hit_ratio << '\n'
+           << "txn_latch.operation_requests=" << latch_stats.operation_requests << '\n'
+           << "txn_latch.operation_wait_us=" << latch_stats.operation_wait_us << '\n'
+           << "txn_latch.write_requests=" << latch_stats.write_requests << '\n'
+           << "txn_latch.write_wait_us=" << latch_stats.write_wait_us << '\n'
+           << "txn_latch.table_read_requests=" << latch_stats.table_read_requests << '\n'
+           << "txn_latch.table_read_wait_us=" << latch_stats.table_read_wait_us << '\n'
+           << "txn_latch.table_write_requests=" << latch_stats.table_write_requests << '\n'
+           << "txn_latch.table_write_wait_us=" << latch_stats.table_write_wait_us << '\n'
+           << "parser_lock.requests=" << parser_lock_requests.load(std::memory_order_relaxed) << '\n'
+           << "parser_lock.wait_us=" << parser_lock_wait_us.load(std::memory_order_relaxed) << '\n';
+        const std::string response = os.str();
+        const size_t response_size = std::min(response.size(), static_cast<size_t>(BUFFER_LENGTH - 1));
+        memcpy(data_send, response.data(), response_size);
+        data_send[response_size] = '\0';
+        offset = static_cast<int>(response_size);
+        return true;
+    }
     if (command == "set output_file off") {
         output_file_enabled.store(false, std::memory_order_relaxed);
         data_send[0] = '\0';
@@ -245,15 +277,18 @@ void execute_parse_tree(std::shared_ptr<ast::TreeNode> parse_tree, char *data_se
         txn_manager->abort(context->txn_, log_manager.get());
         if (early_retry_conflict) {
             // Desynchronize clients that immediately retry the same hot row.
-            constexpr int kBaseBackoffUs = 500;
-            constexpr int kBackoffStepUs = 500;
-            constexpr int kBackoffSlots = 4;
+            // A scale-one TPC-C run makes Payment contend on its sole
+            // warehouse row.  The former 0.5-2ms window was shorter than a
+            // winning multi-statement transaction, causing the same clients
+            // to collide again immediately.  Spread retries over 1-8ms;
+            // this only delays an already-aborted statement.
+            constexpr int kBaseBackoffUs = 1000;
+            constexpr int kBackoffStepUs = 1000;
+            constexpr int kBackoffSlots = 8;
             const int delay_us = kBaseBackoffUs +
                                  static_cast<int>(e.get_transaction_id() % kBackoffSlots) * kBackoffStepUs;
             std::this_thread::sleep_for(std::chrono::microseconds(delay_us));
         }
-        std::cout << e.GetInfo() << std::endl;
-
         if (output_file_enabled.load(std::memory_order_relaxed)) {
             std::fstream outfile;
             outfile.open("output.txt", std::ios::out | std::ios::app);
@@ -395,7 +430,13 @@ void *client_handler(void *sock_fd) {
             finish_analyze = true;
             execute_parse_tree(std::move(parse_tree), data_send, offset, &txn_id, context.get());
         } else {
+            auto parser_wait_started = std::chrono::steady_clock::now();
             pthread_mutex_lock(buffer_mutex);
+            parser_lock_requests.fetch_add(1, std::memory_order_relaxed);
+            parser_lock_wait_us.fetch_add(
+                static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - parser_wait_started).count()),
+                std::memory_order_relaxed);
             ast::parse_tree.reset();
             YY_BUFFER_STATE buf = yy_scan_string(data_recv);
             if (yyparse() == 0) {

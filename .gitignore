@@ -19,7 +19,10 @@ z_per/
 z_phase3_tests/
 build-profile/
 build-gprof/
+build-tpcc-gprof/
 
 # Local performance profiling outputs.
 perf_runs/
+gmon.out
+gmon.out.*
 tools/FlameGraph/

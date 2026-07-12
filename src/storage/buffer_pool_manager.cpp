@@ -78,8 +78,10 @@ void BufferPoolManager::update_page(Page *page, PageId new_page_id, frame_id_t n
  */
 Page* BufferPoolManager::fetch_page(PageId page_id) {
     std::scoped_lock lock{latch_};
+    fetches_.fetch_add(1, std::memory_order_relaxed);
     if (last_page_id_ == page_id && last_frame_id_ != INVALID_FRAME_ID &&
         pages_[last_frame_id_].get_page_id() == page_id) {
+        hits_.fetch_add(1, std::memory_order_relaxed);
         Page *page = &pages_[last_frame_id_];
         page->pin_count_++;
         replacer_->pin(last_frame_id_);
@@ -87,6 +89,7 @@ Page* BufferPoolManager::fetch_page(PageId page_id) {
     }
     auto it = page_table_.find(page_id);
     if (it != page_table_.end()) {
+        hits_.fetch_add(1, std::memory_order_relaxed);
         Page *page = &pages_[it->second];
         last_page_id_ = page_id;
         last_frame_id_ = it->second;
@@ -97,10 +100,15 @@ Page* BufferPoolManager::fetch_page(PageId page_id) {
 
     frame_id_t frame_id;
     if (!find_victim_page(&frame_id)) {
+        failed_fetches_.fetch_add(1, std::memory_order_relaxed);
         return nullptr;
     }
 
+    misses_.fetch_add(1, std::memory_order_relaxed);
     Page *page = &pages_[frame_id];
+    if (page->get_page_id().page_no != INVALID_PAGE_ID) {
+        evictions_.fetch_add(1, std::memory_order_relaxed);
+    }
     update_page(page, page_id, frame_id);
     disk_manager_->read_page(page_id.fd, page_id.page_no, page->get_data(), PAGE_SIZE);
     page->pin_count_ = 1;

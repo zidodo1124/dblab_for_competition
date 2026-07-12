@@ -96,6 +96,13 @@ bool Planner::get_index_cols(std::string tab_name, std::vector<Condition> curr_c
     if (best_prefix_len == 0) {
         return false;
     }
+    // Without column statistics an unconstrained leading-key range can cover
+    // most of a table.  A sequential scan then avoids one index traversal and
+    // one heap lookup per qualifying RID.  Keep range scans when equality has
+    // already restricted an index prefix, which is the common TPC-C pattern.
+    if (best_has_range && best_prefix_len == 1) {
+        return false;
+    }
     index_col_names = std::move(best_cols);
     return true;
 }

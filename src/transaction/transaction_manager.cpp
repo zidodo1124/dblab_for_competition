@@ -830,7 +830,10 @@ void TransactionManager::retire_transaction(txn_id_t txn_id) {
     if (txn_id == INVALID_TXN_ID) {
         return;
     }
-    auto write_guard = acquire_write_latch();
+    // Commit/abort has already removed this transaction from active_txns_ and
+    // finalized its page and MVCC state.  Retirement only erases txn_map, so
+    // share the checkpoint boundary instead of serializing every session.
+    auto operation_guard = acquire_operation_latch();
     Transaction *retired = nullptr;
     {
         std::lock_guard<std::mutex> lock(latch_);

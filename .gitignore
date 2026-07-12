@@ -15,8 +15,10 @@ z_tasks_todo/
 z_task_done/
 z_teach/
 z_learn/
+# Local Phase 2/3 correctness suites and performance probes.
 z_per/
 z_phase3_tests/
+__pycache__/
 build-profile/
 build-gprof/
 build-tpcc-gprof/

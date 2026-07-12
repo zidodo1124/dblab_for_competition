@@ -276,7 +276,7 @@ private:
     };
 
     VersionKey version_key(const std::string &tab_name, const Rid &rid) const;
-    void remember_version_rid(const std::string &tab_name, const Rid &rid);
+    void remember_version_rid(const std::string &tab_name, const Rid &rid, std::vector<Version> *versions);
     int64_t rid_key(const Rid &rid) const;
     size_t record_hash(const RmRecord &record) const;
     bool same_record(const RmRecord &lhs, const RmRecord &rhs) const;
@@ -312,9 +312,10 @@ private:
     std::unordered_map<std::string, std::shared_ptr<std::shared_mutex>> table_latches_;
     std::unordered_set<txn_id_t> active_txns_;
     std::unordered_map<VersionKey, std::vector<Version>, VersionKeyHash> versions_;
-    // Snapshot scans need versions from one table only. Keep the table-local
-    // RID set so they do not walk every table's version chain.
-    std::unordered_map<std::string, std::unordered_set<Rid>> table_version_rids_;
+    // Snapshot scans need versions from one table only. Keep direct pointers
+    // to the stable vector objects owned by versions_ to avoid a second global
+    // VersionKey hash lookup for every RID in a table-local scan.
+    std::unordered_map<std::string, std::unordered_map<Rid, std::vector<Version> *>> table_version_rids_;
     std::unordered_map<txn_id_t, std::unordered_set<VersionKey, VersionKeyHash>> txn_version_keys_;
     std::unordered_map<std::string, std::unordered_map<size_t, std::vector<NoIndexWrite>>> no_index_writes_;
     std::unordered_map<txn_id_t, std::vector<std::pair<std::string, size_t>>> txn_no_index_write_keys_;

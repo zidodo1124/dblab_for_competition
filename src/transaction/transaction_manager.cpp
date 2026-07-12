@@ -286,8 +286,9 @@ TransactionManager::VersionKey TransactionManager::version_key(const std::string
     return VersionKey{tab_name, rid};
 }
 
-void TransactionManager::remember_version_rid(const std::string &tab_name, const Rid &rid) {
-    table_version_rids_[tab_name].insert(rid);
+void TransactionManager::remember_version_rid(const std::string &tab_name, const Rid &rid,
+                                              std::vector<Version> *versions) {
+    table_version_rids_[tab_name].emplace(rid, versions);
 }
 
 int64_t TransactionManager::rid_key(const Rid &rid) const {
@@ -338,8 +339,9 @@ void TransactionManager::ensure_base_version(const std::string &tab_name, const 
     version.txn_id = INVALID_TXN_ID;
     version.commit_ts = 0;
     version.committed = true;
-    versions_[key].push_back(version);
-    remember_version_rid(tab_name, rid);
+    auto &list = versions_[key];
+    list.push_back(version);
+    remember_version_rid(tab_name, rid, &list);
 }
 
 TransactionManager::Version *TransactionManager::latest_version(const std::string &tab_name, const Rid &rid) {
@@ -408,15 +410,12 @@ std::vector<std::pair<Rid, RmRecord>> TransactionManager::get_visible_records(co
 
     auto table_versions = table_version_rids_.find(tab_name);
     if (table_versions != table_version_rids_.end()) {
-        for (const Rid &rid : table_versions->second) {
+        for (const auto &entry : table_versions->second) {
+            const Rid &rid = entry.first;
             if (seen.count(rid) > 0) {
                 continue;
             }
-            auto version_it = versions_.find(version_key(tab_name, rid));
-            if (version_it == versions_.end()) {
-                continue;
-            }
-            Version *visible = visible_version(version_it->second, context->txn_);
+            Version *visible = visible_version(*entry.second, context->txn_);
             if (visible != nullptr && !visible->deleted) {
                 result.emplace_back(rid, visible->record);
             }
@@ -441,12 +440,13 @@ std::vector<std::pair<Rid, RmRecord>> TransactionManager::get_visible_version_re
         return result;
     }
     result.reserve(table_versions->second.size());
-    for (const Rid &rid : table_versions->second) {
-        auto version_it = versions_.find(version_key(tab_name, rid));
-        if (version_it == versions_.end() || version_it->second.empty()) {
+    for (const auto &entry : table_versions->second) {
+        const Rid &rid = entry.first;
+        std::vector<Version> *versions = entry.second;
+        if (versions == nullptr || versions->empty()) {
             continue;
         }
-        Version *visible = visible_version(version_it->second, context->txn_);
+        Version *visible = visible_version(*versions, context->txn_);
         if (visible != nullptr && !visible->deleted && (!filter || filter(rid, visible->record))) {
             result.emplace_back(rid, visible->record);
         }
@@ -517,8 +517,9 @@ void TransactionManager::append_insert_version(const std::string &tab_name, cons
     version.rid = rid;
     version.record = record;
     version.txn_id = txn->get_transaction_id();
-    versions_[key].push_back(version);
-    remember_version_rid(tab_name, rid);
+    auto &list = versions_[key];
+    list.push_back(version);
+    remember_version_rid(tab_name, rid, &list);
     txn_version_keys_[txn->get_transaction_id()].insert(std::move(key));
 }
 
@@ -545,7 +546,7 @@ void TransactionManager::append_update_version(const std::string &tab_name, cons
     version.record = new_record;
     version.txn_id = txn->get_transaction_id();
     list.push_back(version);
-    remember_version_rid(tab_name, rid);
+    remember_version_rid(tab_name, rid, &list);
     txn_version_keys_[txn->get_transaction_id()].insert(std::move(key));
 }
 
@@ -572,7 +573,7 @@ void TransactionManager::append_delete_version(const std::string &tab_name, cons
     version.txn_id = txn->get_transaction_id();
     version.deleted = true;
     list.push_back(version);
-    remember_version_rid(tab_name, rid);
+    remember_version_rid(tab_name, rid, &list);
     txn_version_keys_[txn->get_transaction_id()].insert(std::move(key));
 }
 
@@ -639,12 +640,8 @@ void TransactionManager::record_select_predicate(const std::string &tab_name, co
     if (table_versions == table_version_rids_.end()) {
         return;
     }
-    for (const Rid &rid : table_versions->second) {
-        auto version_it = versions_.find(version_key(tab_name, rid));
-        if (version_it == versions_.end()) {
-            continue;
-        }
-        for (auto &version : version_it->second) {
+    for (const auto &entry : table_versions->second) {
+        for (auto &version : *entry.second) {
             if (version.aborted || version.old_image || version.txn_id == txn->get_transaction_id()) {
                 continue;
             }
@@ -921,8 +918,8 @@ void TransactionManager::clear_table_versions(const std::string &tab_name) {
     std::unique_lock<std::shared_mutex> lock(mvcc_latch_);
     auto table_versions = table_version_rids_.find(tab_name);
     if (table_versions != table_version_rids_.end()) {
-        for (const Rid &rid : table_versions->second) {
-            versions_.erase(version_key(tab_name, rid));
+        for (const auto &entry : table_versions->second) {
+            versions_.erase(version_key(tab_name, entry.first));
         }
         table_version_rids_.erase(table_versions);
     }

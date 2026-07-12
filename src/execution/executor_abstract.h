@@ -160,18 +160,26 @@ class AbstractExecutor {
         auto lhs_col = get_col(rec_cols, cond.lhs_col);
         const char *lhs = rec->data + lhs_col->offset;
         const char *rhs = nullptr;
-        std::unique_ptr<RmRecord> rhs_raw;
+        int int_rhs = 0;
+        float float_rhs = 0;
+        char string_rhs[RM_MAX_RECORD_SIZE];
         if (cond.is_rhs_val) {
-            rhs_raw = std::make_unique<RmRecord>(lhs_col->len);
-            if (cond.rhs_val.type == TYPE_INT) {
-                *(int *)rhs_raw->data = cond.rhs_val.int_val;
+            if (cond.rhs_val.raw != nullptr && cond.rhs_val.raw->size == lhs_col->len) {
+                rhs = cond.rhs_val.raw->data;
+            } else if (cond.rhs_val.type == TYPE_INT) {
+                int_rhs = cond.rhs_val.int_val;
+                rhs = reinterpret_cast<const char *>(&int_rhs);
             } else if (cond.rhs_val.type == TYPE_FLOAT) {
-                *(float *)rhs_raw->data = cond.rhs_val.float_val;
+                float_rhs = cond.rhs_val.float_val;
+                rhs = reinterpret_cast<const char *>(&float_rhs);
             } else {
-                memset(rhs_raw->data, 0, lhs_col->len);
-                memcpy(rhs_raw->data, cond.rhs_val.str_val.c_str(), cond.rhs_val.str_val.size());
+                if (lhs_col->len > RM_MAX_RECORD_SIZE || cond.rhs_val.str_val.size() > static_cast<size_t>(lhs_col->len)) {
+                    throw StringOverflowError();
+                }
+                memset(string_rhs, 0, lhs_col->len);
+                memcpy(string_rhs, cond.rhs_val.str_val.c_str(), cond.rhs_val.str_val.size());
+                rhs = string_rhs;
             }
-            rhs = rhs_raw->data;
         } else {
             auto rhs_col = get_col(rec_cols, cond.rhs_col);
             rhs = rec->data + rhs_col->offset;

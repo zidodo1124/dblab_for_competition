@@ -932,12 +932,8 @@ std::shared_ptr<Plan> Planner::generate_optimized_select_plan(std::shared_ptr<Qu
         bool index_exist = get_index_cols(real_table, local_conds[tab_name], index_cols, tab_name);
         std::shared_ptr<Plan> plan =
             std::make_shared<ScanPlan>(index_exist ? T_IndexScan : T_SeqScan, sm_manager_, real_table,
-                                       index_exist ? local_conds[tab_name] : std::vector<Condition>(),
+                                       local_conds[tab_name],
                                        index_cols, tab_name, real_table);
-        if (!local_conds[tab_name].empty()) {
-            plan = std::make_shared<FilterPlan>(T_Filter, std::move(plan), local_conds[tab_name],
-                                                query->tab_display_names);
-        }
         if (push_project && !pushed_cols[tab_name].empty()) {
             plan = std::make_shared<ProjectionPlan>(T_Projection, std::move(plan), pushed_cols[tab_name],
                                                     false, query->tab_display_names);

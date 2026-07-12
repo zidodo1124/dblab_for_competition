@@ -83,7 +83,8 @@ public:
                                                                Context *context);
     std::vector<std::pair<Rid, RmRecord>> get_visible_version_records(const std::string &tab_name, Context *context);
     std::unique_ptr<RmRecord> get_visible_record(const std::string &tab_name, const Rid &rid, RmFileHandle *fh,
-                                                  Context *context);
+                                                  Context *context,
+                                                  std::unique_ptr<RmRecord> physical_record = nullptr);
     void check_write_conflict(const std::string &tab_name, const Rid &rid, Transaction *txn);
     void check_insert_conflict(const std::string &tab_name, const RmRecord &record, Transaction *txn);
     void record_select_predicate(const std::string &tab_name, const std::vector<Condition> &conds, Transaction *txn);
@@ -264,7 +265,7 @@ private:
     SmManager *sm_manager_;
     LockManager *lock_manager_;
 
-    std::mutex mvcc_latch_;
+    std::shared_mutex mvcc_latch_;
     std::shared_mutex write_latch_;
     std::mutex table_latches_mutex_;
     std::unordered_map<std::string, std::shared_ptr<std::shared_mutex>> table_latches_;

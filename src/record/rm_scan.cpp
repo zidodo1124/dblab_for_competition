@@ -69,3 +69,12 @@ bool RmScan::is_end() const {
 Rid RmScan::rid() const {
     return rid_;
 }
+
+std::unique_ptr<RmRecord> RmScan::get_record() const {
+    if (page_ == nullptr || is_end() || rid_.page_no != pinned_page_no_ ||
+        !Bitmap::is_set(RmPageHandle(&file_handle_->file_hdr_, page_).bitmap, rid_.slot_no)) {
+        throw RecordNotFoundError(rid_.page_no, rid_.slot_no);
+    }
+    RmPageHandle page_handle(&file_handle_->file_hdr_, page_);
+    return std::make_unique<RmRecord>(file_handle_->file_hdr_.record_size, page_handle.get_slot(rid_.slot_no));
+}

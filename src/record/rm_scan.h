@@ -10,6 +10,8 @@ See the Mulan PSL v2 for more details. */
 
 #pragma once
 
+#include <memory>
+
 #include "rm_defs.h"
 
 class RmFileHandle;
@@ -34,4 +36,6 @@ public:
     bool is_end() const override;
 
     Rid rid() const override;
+
+    std::unique_ptr<RmRecord> get_record() const;
 };

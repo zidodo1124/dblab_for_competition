@@ -40,11 +40,12 @@ class SeqScanExecutor : public AbstractExecutor {
     void advance_to_valid() {
         while (scan_ != nullptr && !scan_->is_end()) {
             rid_ = scan_->rid();
+            auto physical_record = scan_->get_record();
             scan_->next();
             std::unique_ptr<RmRecord> rec =
                 context_->txn_mgr_ == nullptr
-                    ? fh_->get_record(rid_, context_)
-                    : context_->txn_mgr_->get_visible_record(tab_name_, rid_, fh_, context_);
+                    ? std::move(physical_record)
+                    : context_->txn_mgr_->get_visible_record(tab_name_, rid_, fh_, context_, std::move(physical_record));
             if (rec == nullptr) {
                 continue;
             }
